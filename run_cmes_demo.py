@@ -24,7 +24,7 @@ from src.viz.map_plotter import plot_map
 # ---------------------------------------------------------------------------
 DATA_DIR   = DATA_DIR_CMEMS
 OUT_DIR    = OUTPUT_DIR / "cemes_demo"
-START_DATE = "2023-01-03"  # which day to plot (None = first available)
+START_DATE = "2023-01-02"  # which day to plot (None = first available)
 DEPTH_IDX  = 0             # vertical level: 0=surface, -1=bottom
 
 # Per-variable colormap (canonical_name → cmap)
@@ -115,7 +115,9 @@ for key in reader.datasets:
                  f"{t_val.date()}  |  depth={depth_val:.1f} m")
 
         stem = Path(key).stem
-        out_path = OUT_DIR / f"{stem}_{canon_name}_{t_val.date()}.png"
+        date_dir = OUT_DIR / str(t_val.date())
+        date_dir.mkdir(parents=True, exist_ok=True)
+        out_path = date_dir / f"{stem}_{canon_name}.png"
         cmap = CMAPS.get(canon_name, "Spectral_r")
 
         plot_map(da, lon, lat, title=title, cmap=cmap, output_path=out_path)
@@ -125,4 +127,8 @@ for key in reader.datasets:
               f"range=[{float(np.nanmin(v)):.4g}, {float(np.nanmax(v)):.4g}]  "
               f"→ {out_path.name}")
 
-print(f"\nDone — {len(list(OUT_DIR.glob('*.png')))} figures saved to {OUT_DIR}/")
+figs = sorted(OUT_DIR.rglob("*.png"))
+print(f"\nDone — {len(figs)} figures saved to {OUT_DIR}/")
+for d in sorted(OUT_DIR.glob("*/")):
+    n = len(list(d.glob("*.png")))
+    print(f"    {d.name}/  ({n} plots)")
