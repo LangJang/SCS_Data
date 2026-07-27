@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.spec
+*.egg
+
+# Conda / Virtual environment
+env/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project data directories
+data/
+output/
+logs/
+*.nc
+*.nc4
+*.hdf5
+*.h5
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment (local, not for sharing)
+.environ
+.env

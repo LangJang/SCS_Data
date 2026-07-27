@@ -1,0 +1,20 @@
+# Core data processing
+numpy>=2.4
+pandas>=3.0
+xarray>=2024.0
+netCDF4>=1.7
+scipy>=1.14
+
+# GUI
+PyQt6>=6.9
+
+# Visualization
+matplotlib>=3.11
+seaborn>=0.13
+cartopy>=0.25
+
+# Export
+openpyxl>=3.1
+
+# Packaging
+pyinstaller>=6.0
