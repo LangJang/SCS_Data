@@ -24,7 +24,7 @@ from src.viz.map_plotter import plot_map
 # ---------------------------------------------------------------------------
 DATA_DIR   = DATA_DIR_CMEMS
 OUT_DIR    = OUTPUT_DIR / "cemes_demo"
-START_DATE = "2023-01-01"  # which day to plot (None = first available)
+START_DATE = "2023-01-03"  # which day to plot (None = first available)
 DEPTH_IDX  = 0             # vertical level: 0=surface, -1=bottom
 
 # Per-variable colormap (canonical_name → cmap)
@@ -95,8 +95,9 @@ for key in reader.datasets:
     t_vals = ds[meta.time_dim].values
     if START_DATE is not None:
         target = pd.Timestamp(START_DATE)
-        time_idx = int(np.argmin(np.abs(t_vals.astype("datetime64[ns]").astype(np.int64)
-                                          - target.asm8.astype(np.int64))))
+        t_ns = t_vals.astype("datetime64[ns]").astype(np.int64)
+        target_ns = target.asm8.astype("datetime64[ns]").astype(np.int64)
+        time_idx = int(np.argmin(np.abs(t_ns - target_ns)))
     else:
         time_idx = 0
 
