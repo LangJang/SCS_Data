@@ -20,12 +20,12 @@ from src.core.config import DATA_DIR_CMEMS, OUTPUT_DIR
 from src.viz.map_plotter import plot_map
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — change these to control which day and variables are plotted
 # ---------------------------------------------------------------------------
-DATA_DIR  = DATA_DIR_CMEMS
-OUT_DIR   = OUTPUT_DIR / "cemes_demo"
-TIME_IDX  = 0              # first time step (2023-01-01 for all 3 files)
-DEPTH_IDX = 0              # surface (depth=0)
+DATA_DIR   = DATA_DIR_CMEMS
+OUT_DIR    = OUTPUT_DIR / "cemes_demo"
+START_DATE = "2023-01-01"  # which day to plot (None = first available)
+DEPTH_IDX  = 0             # vertical level: 0=surface, -1=bottom
 
 # Per-variable colormap (canonical_name → cmap)
 CMAPS = {
@@ -76,10 +76,10 @@ for key in reader.datasets:
         print(f"  {key}  — {e}")
 
 # ---------------------------------------------------------------------------
-# 3. Extract & plot — one map per variable per file
+# 3. Resolve time index from START_DATE, then plot
 # ---------------------------------------------------------------------------
 print(f"\n{'=' * 60}")
-print(f"  Surface Maps  (time_idx={TIME_IDX}, depth_idx={DEPTH_IDX})")
+print(f"  Surface Maps  (depth_idx={DEPTH_IDX})")
 print(f"{'=' * 60}")
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -91,11 +91,24 @@ for key in reader.datasets:
     except KeyError:
         continue
 
-    t_val = pd.Timestamp(ds[meta.time_dim].values[TIME_IDX])
+    # Resolve time index from START_DATE
+    t_vals = ds[meta.time_dim].values
+    if START_DATE is not None:
+        target = pd.Timestamp(START_DATE)
+        time_idx = int(np.argmin(np.abs(t_vals.astype("datetime64[ns]").astype(np.int64)
+                                          - target.asm8.astype(np.int64))))
+    else:
+        time_idx = 0
+
+    t_val = pd.Timestamp(t_vals[time_idx])
     depth_val = float(ds[meta.coord_map.get("depth", "depth")].values[DEPTH_IDX])
 
+    print(f"\n  {key}")
+    print(f"    Date:  {t_val.date()}")
+    print(f"    Depth: {depth_val:.1f} m")
+
     for canon_name in sorted(meta.available_variables()):
-        da, lon, lat = extract_field(ds, meta, canon_name, TIME_IDX, DEPTH_IDX)
+        da, lon, lat = extract_field(ds, meta, canon_name, time_idx, DEPTH_IDX)
 
         title = (f"CMEMS Surface {meta.display_label(canon_name)}\n"
                  f"{t_val.date()}  |  depth={depth_val:.1f} m")
@@ -107,7 +120,7 @@ for key in reader.datasets:
         plot_map(da, lon, lat, title=title, cmap=cmap, output_path=out_path)
 
         v = da.values
-        print(f"  {canon_name:<20s}  "
+        print(f"    {canon_name:<20s}  "
               f"range=[{float(np.nanmin(v)):.4g}, {float(np.nanmax(v)):.4g}]  "
               f"→ {out_path.name}")
 

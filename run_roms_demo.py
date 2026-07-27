@@ -13,18 +13,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
+import pandas as pd
 from src.core.time_assembler import TimeAssembler
 from src.core.roms_utils import extract_field
 from src.core.config import DATA_DIR_ROMS, OUTPUT_DIR
 from src.viz.map_plotter import plot_map
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — change these to control which days and variables are plotted
 # ---------------------------------------------------------------------------
-DATA_DIR  = DATA_DIR_ROMS
-OUT_DIR   = OUTPUT_DIR / "roms_demo"
-LEVEL_IDX = -1            # surface (s_rho=-1)
-N_DAYS    = 3             # how many days to plot (max 27)
+DATA_DIR   = DATA_DIR_ROMS
+OUT_DIR    = OUTPUT_DIR / "roms_demo"
+LEVEL_IDX  = -1             # vertical level: -1=surface, 0=bottom, or 0..44
+START_DATE = "2023-01-03"   # first day to plot (set to None for earliest available)
+N_DAYS     = 1              # how many days starting from START_DATE (max 27)
 
 # Variables to plot: (canonical_name, colormap)
 VARIABLES = [
@@ -52,11 +54,23 @@ missing = assembler.missing_dates()
 if missing:
     print(f"  Missing dates: {', '.join(str(d.date()) for d in missing)}")
 
-# Use a subset for quick demo
-if N_DAYS < assembler.n_files:
-    print(f"  [DEMO] Using first {N_DAYS} of {assembler.n_files} days")
-    dates = assembler.dates[:N_DAYS]
-    assembler._file_map = {d: assembler._file_map[d] for d in dates}
+# Select date range
+if START_DATE is not None:
+    start_ts = pd.Timestamp(START_DATE)
+    # Find the index closest to START_DATE
+    all_dates = assembler.dates
+    start_idx = min(range(len(all_dates)),
+                    key=lambda i: abs((all_dates[i] - start_ts).total_seconds()))
+    end_idx = min(start_idx + N_DAYS, assembler.n_files)
+    selected_dates = all_dates[start_idx:end_idx]
+    if selected_dates:
+        assembler._file_map = {d: assembler._file_map[d] for d in selected_dates}
+    print(f"  Selected:      {selected_dates[0].date()} → {selected_dates[-1].date()} "
+          f"({len(selected_dates)} day(s))")
+else:
+    if N_DAYS < assembler.n_files:
+        dates = assembler.dates[:N_DAYS]
+        assembler._file_map = {d: assembler._file_map[d] for d in dates}
 
 ds = assembler.assemble()
 meta = assembler.assembled_meta
