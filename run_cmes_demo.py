@@ -1,111 +1,114 @@
 """
-CMEMS quick demo — chlorophyll, dissolved oxygen, pH maps.
+CMEMS data demo — surface maps with date in titles, auto-handles all files.
 
 Usage:
     cd d:\ChatWithAI\SCS_data
-    D:\PYTHON\envs\scs_marine\python.exe demo_cemes.py
+    set PYTHONIOENCODING=utf-8
+    D:\PYTHON\envs\scs_marine\python.exe run_cmes_demo.py
 """
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import numpy as np
+import pandas as pd
 from src.core.nc_reader import NCReader
 from src.core.roms_utils import extract_field
 from src.core.config import DATA_DIR_CMEMS, OUTPUT_DIR
 from src.viz.map_plotter import plot_map
 
-DATA_DIR = DATA_DIR_CMEMS
-OUT_DIR  = OUTPUT_DIR / "cemes_demo"
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+DATA_DIR  = DATA_DIR_CMEMS
+OUT_DIR   = OUTPUT_DIR / "cemes_demo"
+TIME_IDX  = 0              # first time step (2023-01-01 for all 3 files)
+DEPTH_IDX = 0              # surface (depth=0)
+
+# Per-variable colormap (canonical_name → cmap)
+CMAPS = {
+    "chlorophyll":       "Greens",
+    "dissolved_oxygen":  "Blues",
+    "ph":                "RdYlBu_r",
+    "nitrate":           "YlOrBr",
+    "phosphate":         "YlOrRd",
+}
 
 reader = NCReader(DATA_DIR)
 
-# --- 1. Scan ---
-print("=== CMEMS Files ===")
-for _, row in reader.scan_files_with_sizes().iterrows():
-    print(f"  {row['name']:<40s} {row['size_mb']:.0f} MB")
+# ---------------------------------------------------------------------------
+# 1. Scan & load
+# ---------------------------------------------------------------------------
+print("=" * 60)
+print("  CMEMS Data Demo")
+print("=" * 60)
 
-# --- 2. Load & detect ---
-print("\n=== Loading & source detection ===")
+print(f"\n  Data dir:  {DATA_DIR}")
+for _, row in reader.scan_files_with_sizes().iterrows():
+    print(f"    {row['name']:<45s} {row['size_mb']:.0f} MB")
+
 reader.load_all()
+
+# ---------------------------------------------------------------------------
+# 2. Source detection & metadata
+# ---------------------------------------------------------------------------
+print(f"\n{'=' * 60}")
+print(f"  Source Detection & Metadata")
+print(f"{'=' * 60}")
 
 for key in reader.datasets:
     try:
         meta = reader.meta(key)
-        print(f"  {key}")
-        print(f"    Source: {meta.source_name}  Grid: {meta.grid_type.name}  Vert: {meta.vertical_type.name}")
-        print(f"    Variables: {sorted(meta.available_variables())}")
-        print(f"    Time dim: {meta.time_dim}  Depth dim: {meta.coord_map.get('depth', 'N/A')}")
+        ds = reader[key]
+        t_vals = ds[meta.time_dim].values
+        print(f"\n  {key}")
+        print(f"    Source:     {meta.source_name}")
+        print(f"    Grid:       {meta.grid_type.name}  "
+              f"{ds.sizes.get('longitude', '?'):} x {ds.sizes.get('latitude', '?'):}")
+        print(f"    Vertical:   {meta.vertical_type.name}  "
+              f"{ds.sizes.get('depth', '?'):} levels")
+        print(f"    Time:       {len(t_vals)} steps  "
+              f"({pd.Timestamp(t_vals[0]).date()} → {pd.Timestamp(t_vals[-1]).date()})")
+        print(f"    Variables:  {sorted(meta.available_variables())}")
     except KeyError as e:
         print(f"  {key}  — {e}")
 
-# --- 3. Get datasets and metas ---
-ds_bgc = reader["SCS_BGC_DO_CHL_2025.nc"]
-meta_bgc = reader.meta("SCS_BGC_DO_CHL_2025.nc")
+# ---------------------------------------------------------------------------
+# 3. Extract & plot — one map per variable per file
+# ---------------------------------------------------------------------------
+print(f"\n{'=' * 60}")
+print(f"  Surface Maps  (time_idx={TIME_IDX}, depth_idx={DEPTH_IDX})")
+print(f"{'=' * 60}")
 
-ds_ph = reader["SCS_BGC_PH_2023-2025.nc"]
-meta_ph = reader.meta("SCS_BGC_PH_2023-2025.nc")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- Quick time/depth inspection ---
-for label, ds, meta in [
-    ("BGC (DO+CHL)", ds_bgc, meta_bgc),
-    ("PH", ds_ph, meta_ph),
-]:
-    t_name = meta.time_dim
-    n_t = ds.sizes[t_name]
-    t0 = ds[t_name].values[0]
-    t_end = ds[t_name].values[-1]
-    print(f"\n  {label}: time={n_t} steps ({t0} → {t_end})")
-    d_name = meta.coord_map.get("depth", "depth")
-    depths = ds[d_name].values
-    print(f"    depth: {len(depths)} levels, [{depths[0]:.1f}, {depths[-1]:.1f}] m")
+for key in reader.datasets:
+    try:
+        meta = reader.meta(key)
+        ds = reader[key]
+    except KeyError:
+        continue
 
-# --- 4. Extract surface fields (depth_idx=0) ---
-print("\n=== Extracting surface fields ===")
-time_idx = 0    # first time step
-depth_idx = 0   # surface
+    t_val = pd.Timestamp(ds[meta.time_dim].values[TIME_IDX])
+    depth_val = float(ds[meta.coord_map.get("depth", "depth")].values[DEPTH_IDX])
 
-# Chlorophyll
-da_chl, lon, lat = extract_field(ds_bgc, meta_bgc, "chlorophyll", time_idx, depth_idx)
-print(f"  chlorophyll: shape={da_chl.shape}, range=[{da_chl.values.min():.4g}, {da_chl.values.max():.4g}]")
+    for canon_name in sorted(meta.available_variables()):
+        da, lon, lat = extract_field(ds, meta, canon_name, TIME_IDX, DEPTH_IDX)
 
-# Dissolved oxygen
-da_o2, _, _ = extract_field(ds_bgc, meta_bgc, "dissolved_oxygen", time_idx, depth_idx)
-print(f"  dissolved_oxygen: shape={da_o2.shape}, range=[{da_o2.values.min():.4g}, {da_o2.values.max():.4g}]")
+        title = (f"CMEMS Surface {meta.display_label(canon_name)}\n"
+                 f"{t_val.date()}  |  depth={depth_val:.1f} m")
 
-# pH
-da_ph, _, _ = extract_field(ds_ph, meta_ph, "ph", time_idx, depth_idx)
-print(f"  ph: shape={da_ph.shape}, range=[{da_ph.values.min():.4g}, {da_ph.values.max():.4g}]")
+        stem = Path(key).stem
+        out_path = OUT_DIR / f"{stem}_{canon_name}_{t_val.date()}.png"
+        cmap = CMAPS.get(canon_name, "Spectral_r")
 
-# --- 5. Plot three maps ---
-print("\n=== Plotting ===")
+        plot_map(da, lon, lat, title=title, cmap=cmap, output_path=out_path)
 
-# 5a — Chlorophyll
-plot_map(
-    da_chl, lon, lat,
-    title="CMEMS — Surface Chlorophyll-a\nSouth China Sea, 2025-01",
-    cmap="Greens",
-    output_path=OUT_DIR / "cemes_chlorophyll_surface.png",
-)
-print("  → cemes_chlorophyll_surface.png")
+        v = da.values
+        print(f"  {canon_name:<20s}  "
+              f"range=[{float(np.nanmin(v)):.4g}, {float(np.nanmax(v)):.4g}]  "
+              f"→ {out_path.name}")
 
-# 5b — Dissolved Oxygen
-plot_map(
-    da_o2, lon, lat,
-    title="CMEMS — Surface Dissolved Oxygen\nSouth China Sea, 2025-01",
-    cmap="Blues",
-    output_path=OUT_DIR / "cemes_dissolved_oxygen_surface.png",
-)
-print("  → cemes_dissolved_oxygen_surface.png")
-
-# 5c — pH
-plot_map(
-    da_ph, lon, lat,
-    title="CMEMS — Surface pH\nSouth China Sea, 2023-01",
-    cmap="RdYlBu_r",
-    output_path=OUT_DIR / "cemes_ph_surface.png",
-)
-print("  → cemes_ph_surface.png")
-
-print(f"\nDone — 3 figures saved to {OUT_DIR}/")
+print(f"\nDone — {len(list(OUT_DIR.glob('*.png')))} figures saved to {OUT_DIR}/")
