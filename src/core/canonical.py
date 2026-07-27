@@ -48,6 +48,7 @@ CANONICAL_VARIABLES: Dict[str, Tuple[str, str]] = {
     "dissolved_oxygen":         ("Dissolved Oxygen", "mmol m⁻³"),
     "nitrate":                  ("Nitrate", "mmol m⁻³"),
     "phosphate":                ("Phosphate", "mmol m⁻³"),
+    "silicate":                 ("Dissolved Silicate", "mmol m⁻³"),
     "ph":                       ("pH", ""),
     "primary_production":       ("Primary Production", "mg C m⁻² day⁻¹"),
 

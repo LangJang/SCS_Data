@@ -42,6 +42,7 @@ class CMEMSAdapter(DataSourceAdapter):
         "o2":             "dissolved_oxygen",
         "no3":            "nitrate",
         "po4":            "phosphate",
+        "si":             "silicate",
         "ph":             "ph",
         "pp":             "primary_production",
 
