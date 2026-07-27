@@ -9,9 +9,10 @@ source checks and fail with a clear message for non-ROMS sources.
 """
 
 from pathlib import Path
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict, Tuple, List, Union
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from src.core.canonical import SourceMeta, GridType, VerticalType
@@ -375,3 +376,360 @@ def snapshot_all_fields(
         print(f"[OK] {canon} → {out_path}")
 
     return saved
+
+
+# ---------------------------------------------------------------------------
+# Time-series extraction (v2 — multi-timestep support)
+# ---------------------------------------------------------------------------
+
+def extract_timeseries(
+    ds: xr.Dataset,
+    meta: SourceMeta,
+    canonical_name: str,
+    level_idx: int | None = None,
+    *,
+    lat_range: Tuple[float, float] | None = None,
+    lon_range: Tuple[float, float] | None = None,
+    time_slice: slice | None = None,
+    reduce: str = "mean",
+) -> "TimeseriesResult":
+    """Extract a spatially-averaged time series from a multi-timestep dataset.
+
+    Selects a spatial sub-region (or the whole domain), applies a reduction
+    (mean, sum, etc.), and returns a 1-D time series.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Multi-timestep dataset (e.g. from :class:`TimeAssembler.assemble`).
+    meta : SourceMeta
+    canonical_name : str
+        Canonical variable name.
+    level_idx : int or None
+        Vertical level index.  ``None`` for 2-D variables.
+    lat_range : (float, float) or None
+        Latitude bounds ``(min, max)``.  If None, uses full domain.
+    lon_range : (float, float) or None
+        Longitude bounds ``(min, max)``.  If None, uses full domain.
+    time_slice : slice or None
+        If None, uses all timesteps.
+    reduce : str
+        Reduction operation: ``"mean"``, ``"sum"``, ``"min"``, ``"max"``,
+        ``"std"``.
+
+    Returns
+    -------
+    TimeseriesResult
+        Named tuple with ``values``, ``times``, ``label``, ``units`` fields.
+    """
+    src_var = meta.source_var(canonical_name)
+    da = ds[src_var]
+
+    # Slice time
+    time_name = meta.time_dim
+    if time_name and time_name in da.dims:
+        if time_slice is not None:
+            da = da.isel({time_name: time_slice})
+        time_vals = da[time_name].values
+    else:
+        time_vals = None
+
+    # Slice vertical
+    vert_dims = _vertical_dims(da, meta)
+    if vert_dims:
+        if level_idx is None:
+            raise ValueError(
+                f"Variable '{canonical_name}' has vertical dim(s) "
+                f"{vert_dims}; level_idx must be provided."
+            )
+        da = da.isel({vert_dims[0]: level_idx})
+
+    # Spatial subset
+    lon_coord, lat_coord = _resolve_coords(ds, meta, src_var)
+
+    if lon_range is not None:
+        lon_mask = (lon_coord >= lon_range[0]) & (lon_coord <= lon_range[1])
+        if lon_coord.ndim == 2:
+            da = da.where(lon_mask)
+        else:
+            da = da.where(lon_mask, drop=True)
+
+    if lat_range is not None:
+        lat_mask = (lat_coord >= lat_range[0]) & (lat_coord <= lat_range[1])
+        if lat_coord.ndim == 2:
+            da = da.where(lat_mask)
+        else:
+            da = da.where(lat_mask, drop=True)
+
+    # Reduce spatially over all remaining spatial dims
+    spatial_dims = [d for d in da.dims
+                    if d not in (time_name,) and d not in vert_dims]
+
+    if spatial_dims:
+        if reduce == "mean":
+            da = da.mean(dim=spatial_dims)
+        elif reduce == "sum":
+            da = da.sum(dim=spatial_dims)
+        elif reduce == "min":
+            da = da.min(dim=spatial_dims)
+        elif reduce == "max":
+            da = da.max(dim=spatial_dims)
+        elif reduce == "std":
+            da = da.std(dim=spatial_dims)
+        else:
+            raise ValueError(f"Unknown reduce: {reduce}")
+
+    values = da.values
+    if values is None:
+        values = da.compute().values
+
+    return TimeseriesResult(
+        values=np.asarray(values).ravel(),
+        times=time_vals,
+        label=meta.display_label(canonical_name),
+        units=meta.standard_units(canonical_name),
+    )
+
+
+def extract_point(
+    ds: xr.Dataset,
+    meta: SourceMeta,
+    canonical_name: str,
+    lon: float,
+    lat: float,
+    level_idx: int | None = None,
+    *,
+    time_slice: slice | None = None,
+) -> "TimeseriesResult":
+    """Extract a time series at the grid point nearest to *(lon, lat)*.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+    meta : SourceMeta
+    canonical_name : str
+    lon, lat : float
+        Target geographic coordinates.
+    level_idx : int or None
+    time_slice : slice or None
+
+    Returns
+    -------
+    TimeseriesResult
+    """
+    src_var = meta.source_var(canonical_name)
+    da = ds[src_var]
+
+    # Slice time
+    time_name = meta.time_dim
+    if time_name and time_name in da.dims:
+        if time_slice is not None:
+            da = da.isel({time_name: time_slice})
+        time_vals = da[time_name].values
+    else:
+        time_vals = None
+
+    # Slice vertical
+    vert_dims = _vertical_dims(da, meta)
+    if vert_dims:
+        if level_idx is None:
+            raise ValueError(
+                f"Variable '{canonical_name}' requires level_idx."
+            )
+        da = da.isel({vert_dims[0]: level_idx})
+
+    # Find nearest grid point
+    lon_arr, lat_arr = _resolve_coords(ds, meta, src_var)
+
+    if lon_arr.ndim == 2 and lat_arr.ndim == 2:
+        # Curvilinear — 2-D distance
+        dist = np.sqrt((lon_arr - lon) ** 2 + (lat_arr - lat) ** 2)
+        j, i = np.unravel_index(np.argmin(dist), dist.shape)
+        spatial_dims = [d for d in da.dims
+                        if d not in (time_name,) and d not in vert_dims]
+        if len(spatial_dims) == 2:
+            da = da.isel({spatial_dims[0]: j, spatial_dims[1]: i})
+        else:
+            da = da.isel({spatial_dims[0]: j, spatial_dims[-1]: i})
+    else:
+        # Rectilinear
+        j = np.argmin(np.abs(lat_arr - lat))
+        i = np.argmin(np.abs(lon_arr - lon))
+        spatial_dims = [d for d in da.dims
+                        if d not in (time_name,) and d not in vert_dims]
+        if len(spatial_dims) >= 2:
+            da = da.isel({spatial_dims[0]: j, spatial_dims[1]: i})
+        else:
+            da = da.isel({spatial_dims[0]: i})
+
+    values = da.values
+    if values is None:
+        values = da.compute().values
+
+    return TimeseriesResult(
+        values=np.asarray(values).ravel(),
+        times=time_vals,
+        label=f"{meta.display_label(canonical_name)} at ({lon:.2f}, {lat:.2f})",
+        units=meta.standard_units(canonical_name),
+    )
+
+
+def time_stats(
+    ds: xr.Dataset,
+    meta: SourceMeta,
+    canonical_name: str,
+    level_idx: int | None = None,
+    *,
+    time_slice: slice | None = None,
+    lat_range: Tuple[float, float] | None = None,
+    lon_range: Tuple[float, float] | None = None,
+) -> Dict[str, float]:
+    """Compute temporal statistics for a canonical variable.
+
+    Returns a dict with keys: ``mean``, ``std``, ``min``, ``max``,
+    ``trend_per_day`` (linear trend slope in units/day), ``n_timesteps``.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+    meta : SourceMeta
+    canonical_name : str
+    level_idx : int or None
+    time_slice : slice or None
+    lat_range, lon_range : (float, float) or None
+
+    Returns
+    -------
+    dict[str, float]
+    """
+    result = extract_timeseries(
+        ds, meta, canonical_name, level_idx,
+        lat_range=lat_range, lon_range=lon_range,
+        time_slice=time_slice, reduce="mean",
+    )
+    vals = result.values
+    stats: Dict[str, float] = {
+        "mean": float(np.nanmean(vals)),
+        "std": float(np.nanstd(vals)),
+        "min": float(np.nanmin(vals)),
+        "max": float(np.nanmax(vals)),
+        "n_timesteps": len(vals),
+    }
+
+    # Linear trend (units/day)
+    if len(vals) >= 3:
+        x = np.arange(len(vals), dtype=float)
+        mask = ~np.isnan(vals)
+        if mask.sum() >= 3:
+            slope, _ = np.polyfit(x[mask], vals[mask], 1)
+            stats["trend_per_day"] = float(slope)
+
+    return stats
+
+
+def extract_field_range(
+    ds: xr.Dataset,
+    meta: SourceMeta,
+    canonical_name: str,
+    time_slice: slice,
+    level_idx: int | None = None,
+) -> Tuple[xr.DataArray, np.ndarray, np.ndarray]:
+    """Like :func:`extract_field`, but preserves the time dimension.
+
+    Returns a 3-D DataArray ``(time, y, x)`` instead of a 2-D snapshot.
+    For 2-D variables (no vertical dim), returns ``(time, y, x)``.
+    For 3-D variables with *level_idx*, returns ``(time, y, x)``.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+    meta : SourceMeta
+    canonical_name : str
+    time_slice : slice
+        Time range.  Use ``slice(None)`` for all timesteps.
+    level_idx : int or None
+
+    Returns
+    -------
+    (DataArray, lon, lat)
+    """
+    src_var = meta.source_var(canonical_name)
+    da = ds[src_var]
+
+    # Slice time (but KEEP the dimension)
+    time_name = meta.time_dim
+    if time_name and time_name in da.dims:
+        da = da.isel({time_name: time_slice})
+
+    # Slice vertical
+    vert_dims = _vertical_dims(da, meta)
+    if vert_dims:
+        if level_idx is None:
+            raise ValueError(
+                f"Variable '{canonical_name}' ({src_var}) has vertical "
+                f"dimension(s) {vert_dims}; level_idx must be provided."
+            )
+        da = da.isel({vert_dims[0]: level_idx})
+
+    lon, lat = _resolve_coords(ds, meta, src_var)
+    return da, lon, lat
+
+
+# ---------------------------------------------------------------------------
+# TimeseriesResult — lightweight named container
+# ---------------------------------------------------------------------------
+
+class TimeseriesResult:
+    """Result of a time-series extraction.
+
+    Attributes
+    ----------
+    values : np.ndarray
+        1-D array of variable values in native units.
+    times : np.ndarray or None
+        1-D array of datetime64 values (None if dataset had no time dim).
+    label : str
+        Human-readable variable label.
+    units : str
+        Standard units for the variable.
+    """
+
+    __slots__ = ("values", "times", "label", "units")
+
+    def __init__(
+        self,
+        values: np.ndarray,
+        times: np.ndarray | None,
+        label: str,
+        units: str,
+    ) -> None:
+        self.values = np.asarray(values)
+        self.times = times
+        self.label = label
+        self.units = units
+
+    @property
+    def time_labels(self) -> List[str] | None:
+        """YYYY-MM-DD strings for each timestep."""
+        if self.times is None:
+            return None
+        return [pd.Timestamp(t).strftime("%Y-%m-%d") for t in self.times]
+
+    @property
+    def n(self) -> int:
+        """Number of timesteps."""
+        return len(self.values)
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """Convert to a :class:`pd.DataFrame` with ``time`` and ``value`` cols."""
+        if self.times is not None:
+            return pd.DataFrame({
+                "time": pd.to_datetime(self.times),
+                "value": self.values,
+            })
+        return pd.DataFrame({"value": self.values})
+
+    def __repr__(self) -> str:
+        return (f"<TimeseriesResult: {self.label}, {self.n} steps, "
+                f"range=[{np.nanmin(self.values):.4g}, "
+                f"{np.nanmax(self.values):.4g}]>")
