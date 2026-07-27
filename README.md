@@ -21,44 +21,66 @@ South China Sea (SCS) oceanographic data aggregation, preprocessing, visualizati
 | Packaging | PyInstaller |
 | Environment | conda (Python 3.11) |
 
-## Getting Started
-
-### 1. Create conda environment
+## Quick Start
 
 ```bash
-conda env create -f environment.yml
 conda activate scs_marine
+
+# Unified demo — auto-detects ROMS & CMEMS, generates all maps
+python run_demo.py
+
+# Source-specific demos
+python run_roms_demo.py       # ROMS model output only
+python run_cmes_demo.py       # CMEMS products only
 ```
 
-### 2. Run the application
+## Pipeline Usage
 
-```bash
-python src/main.py
-```
+```python
+from src.core.pipeline import MarineDataPipeline, quick_pipeline
 
-### 3. Build standalone EXE
+# One-liner
+quick_pipeline("D:/data/roms", "ROMS")
+quick_pipeline("D:/data/cemes", "CMEMS")
 
-```bash
-pyinstaller build/scs_marine.spec
+# Step-by-step
+pipe = MarineDataPipeline("D:/data")
+pipe.scan()                    # list files
+pipe.sources()                 # {"ROMS": [...], "CMEMS": [...]}
+pipe.inspect(source="CMEMS")   # metadata
+pipe.process("CMEMS")          # snapshot all fields
 ```
 
 ## Project Structure
 
 ```
 SCS_data/
-├── environment.yml          # conda env spec (reproducible)
-├── requirements.txt         # pip fallback
-├── README.md
+├── run_demo.py              # unified pipeline demo
+├── run_roms_demo.py         # ROMS-only demo
+├── run_cmes_demo.py         # CMEMS-only demo
+├── tools/
+│   └── check_env.py         # env verification
+├── environment.yml
+├── requirements.txt
 ├── src/
-│   ├── main.py              # entry point
-│   ├── ui/                  # PyQt6 GUI modules
+│   ├── main.py              # GUI entry point (WIP)
+│   ├── ui/
 │   │   └── main_window.py
-│   ├── core/                # data logic
-│   │   ├── nc_reader.py     # NetCDF ingestion
-│   │   ├── preprocess.py    # preprocessing
-│   │   └── export.py        # data export
-│   └── assets/              # bundled resources
+│   ├── viz/
+│   │   └── map_plotter.py   # Cartopy map rendering
+│   └── core/
+│       ├── pipeline.py      # unified pipeline
+│       ├── canonical.py     # variable/coordinate standards
+│       ├── nc_reader.py     # NetCDF ingestion + source detection
+│       ├── roms_utils.py    # field extraction + interpolation
+│       ├── preprocess.py    # missing values, resampling, subset
+│       ├── export.py        # CSV, Excel, NetCDF export
+│       └── adapters/        # data-source adapters
+│           ├── base.py
+│           ├── roms_adapter.py
+│           └── cmems_adapter.py
+├── _incoming/               # user script staging area
 ├── data/                    # input data (git-ignored)
-├── output/                  # generated exports (git-ignored)
+├── output/                  # generated figures (git-ignored)
 └── build/                   # PyInstaller config
 ```
