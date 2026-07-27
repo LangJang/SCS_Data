@@ -2,6 +2,8 @@
 NetCDF file reader for SCS marine environmental data.
 
 Handles .nc / .nc4 files via xarray with netCDF4 backend.
+Auto-detects data source (ROMS, CMEMS, …) and builds a canonical
+:class:`SourceMeta` for each loaded dataset.
 Supports product grouping from CMEMS-style filenames
 (``cmems_{product}_{resolution}_{start}_{end}.nc``).
 """
@@ -13,6 +15,9 @@ from collections import defaultdict
 import xarray as xr
 import numpy as np
 import pandas as pd
+
+from src.core.canonical import SourceMeta, GridType, VerticalType
+from src.core.adapters import detect_source
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +107,8 @@ class NCReader:
     def __init__(self, data_dir: str | Path) -> None:
         self._data_dir = Path(data_dir)
         self._datasets: Dict[str, xr.Dataset] = {}
+        self._metas: Dict[str, SourceMeta] = {}
+        self._unmatched: List[str] = []  # datasets without a recognized source
 
     # ------------------------------------------------------------------
     # File Discovery
@@ -181,6 +188,9 @@ class NCReader:
     def load(self, file_path: str | Path) -> xr.Dataset:
         """Load a single NetCDF file into an xarray Dataset.
 
+        Auto-detects the data source (ROMS, CMEMS, …) and builds a
+        :class:`SourceMeta` accessible via :meth:`meta`.
+
         Parameters
         ----------
         file_path : str or Path
@@ -194,6 +204,7 @@ class NCReader:
         key = path.name
         ds = xr.open_dataset(path, engine="netcdf4")
         self._datasets[key] = ds
+        self._build_meta(key, ds, str(path))
         return ds
 
     def load_all(self) -> Dict[str, xr.Dataset]:
@@ -221,6 +232,41 @@ class NCReader:
             ds = self.load(flist[0])
             result[product] = ds
         return result
+
+    # ------------------------------------------------------------------
+    # Source detection & canonical access
+    # ------------------------------------------------------------------
+
+    def _build_meta(self, key: str, ds: xr.Dataset, file_path: str) -> None:
+        """Detect data source and build SourceMeta for a loaded dataset."""
+        adapter_cls = detect_source(ds, file_path)
+        if adapter_cls is None:
+            self._unmatched.append(key)
+            return
+        adapter = adapter_cls()
+        self._metas[key] = adapter.adapt(ds)
+
+    def meta(self, key: str) -> SourceMeta:
+        """Return the SourceMeta for a loaded dataset.
+
+        Raises
+        ------
+        KeyError
+            If *key* is not loaded or its source was not recognized.
+        """
+        if key not in self._datasets:
+            raise KeyError(f"No dataset loaded for key '{key}'.")
+        if key not in self._metas:
+            raise KeyError(
+                f"Dataset '{key}' has no recognized data source. "
+                f"Available sources: ROMS, CMEMS."
+            )
+        return self._metas[key]
+
+    @property
+    def unmatched(self) -> List[str]:
+        """Dataset keys that could not be matched to a known source."""
+        return list(self._unmatched)
 
     # ------------------------------------------------------------------
     # Inspection

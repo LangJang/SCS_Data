@@ -1,12 +1,11 @@
 """
-ROMS ocean model utilities.
+Ocean model field extraction and manipulation utilities.
 
-ROMS (Regional Ocean Modeling System) uses a staggered Arakawa-C grid
-with curvilinear horizontal coordinates.  This module provides:
+Source-aware: works with ROMS, CMEMS, or any data source that has been
+normalized through a :class:`SourceMeta` adapter.
 
-- Field extraction at a given time index and vertical layer
-- u/v → ρ-grid interpolation (for current speed calculation)
-- Batch snapshot plotting via :mod:`viz.map_plotter`
+ROMS-specific features (staggered-grid interpolation) are guarded by
+source checks and fail with a clear message for non-ROMS sources.
 """
 
 from pathlib import Path
@@ -14,169 +13,200 @@ from typing import Optional, Dict, Tuple, List
 
 import numpy as np
 import xarray as xr
-import matplotlib.pyplot as plt
+
+from src.core.canonical import SourceMeta, GridType, VerticalType
 
 
 # ---------------------------------------------------------------------------
-# ROMS coordinate naming conventions
+# ROMS internal coordinate names (kept private for staggered-grid logic)
 # ---------------------------------------------------------------------------
 
-# ROMS uses distinct grid coordinates:
-#   ρ-grid (cell centres): lon_rho, lat_rho   → temp, salt, zeta, w
-#   u-grid (u-velocity):   lon_u,   lat_u     → u, ubar
-#   v-grid (v-velocity):   lon_v,   lat_v     → v, vbar
-
-# Time dimension name (ROMS uses 'ocean_time' instead of 'time')
-_ROMS_TIME = "ocean_time"
-
-# Vertical coordinate names
-_ROMS_S_RHO = "s_rho"   # vertical layers at ρ-points
-_ROMS_S_W   = "s_w"     # vertical layers at w-points (interfaces)
+_ROMS_TIME  = "ocean_time"
+_ROMS_S_RHO = "s_rho"
+_ROMS_S_W   = "s_w"
 
 
 # ---------------------------------------------------------------------------
-# Field specification
-# ---------------------------------------------------------------------------
-
-# Each entry: (display_name, grid_type, zmatch)
-#   grid_type: 'rho' | 'u' | 'v'
-#   zmatch:    's_rho' | 's_w' | 'none'  — which vertical dim the variable uses
-ROMS_FIELD_SPEC: Dict[str, Tuple[str, str, str]] = {
-    "zeta":  ("Sea Surface Height",       "rho", "none"),
-    "ubar":  ("Depth-Averaged U-Current", "u",   "none"),
-    "vbar":  ("Depth-Averaged V-Current", "v",   "none"),
-    "temp":  ("Temperature",              "rho", "s_rho"),
-    "salt":  ("Salinity",                 "rho", "s_rho"),
-    "u":     ("U-Current (eastward)",     "u",   "s_rho"),
-    "v":     ("V-Current (northward)",    "v",   "s_rho"),
-    "w":     ("W-Velocity (vertical)",    "rho", "s_w"),
-}
-
-
-# ---------------------------------------------------------------------------
-# Field extraction
+# Field extraction (source-agnostic via SourceMeta)
 # ---------------------------------------------------------------------------
 
 def extract_field(
     ds: xr.Dataset,
-    varname: str,
+    meta: SourceMeta,
+    canonical_name: str,
     time_idx: int = 0,
-    s_idx: Optional[int] = None,
+    level_idx: int | None = None,
 ) -> Tuple[xr.DataArray, np.ndarray, np.ndarray]:
-    """Extract a single ROMS field at a given time and sigma layer.
+    """Extract a 2-D slice from a dataset using canonical variable names.
 
     Parameters
     ----------
     ds : xr.Dataset
-        ROMS output dataset.
-    varname : str
-        Variable name (e.g., ``"temp"``, ``"u"``, ``"zeta"``).
+        The raw dataset (source-native variable names).
+    meta : SourceMeta
+        Canonical metadata produced by the appropriate adapter.
+    canonical_name : str
+        Canonical variable name (e.g. ``"temperature"``, ``"u_current"``).
     time_idx : int
-        Index along the ocean_time dimension.
-    s_idx : int or None
-        Index along the vertical dimension. Ignored for 2-D fields (zeta, ubar, vbar).
+        Index along the time dimension.
+    level_idx : int or None
+        Index along the vertical dimension. Required for 3-D variables,
+        ignored for 2-D variables.
 
     Returns
     -------
     (DataArray, lon, lat) : (xr.DataArray, np.ndarray, np.ndarray)
-        The sliced 2-D field and its longitude/latitude arrays.
+        The 2-D slice and its lon/lat coordinate arrays.
 
     Raises
     ------
     KeyError
-        If *varname* is not found in *ds* or its ROMS_FIELD_SPEC entry is missing.
+        If the canonical variable is not available in this dataset.
     ValueError
-        If *s_idx* is ``None`` for a 3-D variable.
+        If *level_idx* is ``None`` for a 3-D variable.
     """
-    if varname not in ds.data_vars:
-        raise KeyError(
-            f"Variable '{varname}' not found in dataset. "
-            f"Available: {list(ds.data_vars.keys())}"
-        )
+    # Resolve source variable name
+    src_var = meta.source_var(canonical_name)
+    da = ds[src_var]
 
-    spec = ROMS_FIELD_SPEC.get(varname)
-    if spec is None:
-        raise KeyError(f"Unknown ROMS variable '{varname}'. Add it to ROMS_FIELD_SPEC.")
+    # Resolve time dimension
+    time_name = meta.time_dim
+    if time_name and time_name in da.dims:
+        da = da.isel({time_name: time_idx})
 
-    _display, grid_type, zmatch = spec
-
-    da = ds[varname]
-
-    # Slice time
-    if _ROMS_TIME in da.dims:
-        da = da.isel({_ROMS_TIME: time_idx})
-
-    # Slice vertical layer
-    if zmatch != "none":
-        if s_idx is None:
+    # Slice vertical dimension if present
+    vert_dims = _vertical_dims(da, meta)
+    if vert_dims:
+        if level_idx is None:
             raise ValueError(
-                f"'{varname}' is a 3-D variable (zmatch={zmatch}); s_idx must be provided."
+                f"Variable '{canonical_name}' ({src_var}) has vertical "
+                f"dimension(s) {vert_dims}; level_idx must be provided."
             )
-        da = da.isel({zmatch: s_idx})
+        # Use the first vertical dim
+        da = da.isel({vert_dims[0]: level_idx})
 
-    # Resolve lon/lat by grid type
-    lon, lat = _grid_coords(ds, grid_type)
+    # Resolve lon/lat — delegate to source-specific logic
+    lon, lat = _resolve_coords(ds, meta, src_var)
 
     return da, lon, lat
 
 
-def _grid_coords(ds: xr.Dataset, grid_type: str) -> Tuple[np.ndarray, np.ndarray]:
-    """Return (lon, lat) arrays for a ROMS grid type."""
-    if grid_type == "rho":
-        return ds["lon_rho"].values, ds["lat_rho"].values
-    elif grid_type == "u":
-        return ds["lon_u"].values, ds["lat_u"].values
-    elif grid_type == "v":
-        return ds["lon_v"].values, ds["lat_v"].values
+def _vertical_dims(da: xr.DataArray, meta: SourceMeta) -> List[str]:
+    """Return vertical dimension names present in *da*."""
+    if meta.vertical_type == VerticalType.SIGMA:
+        candidates = [_ROMS_S_RHO, _ROMS_S_W]
+    elif meta.vertical_type == VerticalType.DEPTH:
+        depth_name = meta.coord_map.get("depth", "depth")
+        candidates = [depth_name]
     else:
-        raise ValueError(f"Unknown grid_type '{grid_type}' (expected 'rho'|'u'|'v').")
+        candidates = []
+    return [c for c in candidates if c in da.dims]
+
+
+def _resolve_coords(
+    ds: xr.Dataset,
+    meta: SourceMeta,
+    src_var: str,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return (lon, lat) arrays for *src_var*, handling staggered grids.
+
+    ROMS uses staggered grids: u/ubar are on lon_u/lat_u, v/vbar on lon_v/lat_v.
+    All other variables use lon_rho/lat_rho.
+    """
+    if meta.source_name == "ROMS":
+        return _resolve_roms_coords(ds, src_var)
+    else:
+        # Generic: use canonical lon/lat
+        lon_name = meta.coord_map.get("longitude", "longitude")
+        lat_name = meta.coord_map.get("latitude", "latitude")
+        return ds[lon_name].values, ds[lat_name].values
+
+
+def _resolve_roms_coords(
+    ds: xr.Dataset,
+    src_var: str,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """ROMS-specific: pick lon/lat by grid type."""
+    # Variables on u-grid
+    if src_var in ("u", "ubar", "u_eastward"):
+        return ds["lon_u"].values, ds["lat_u"].values
+    # Variables on v-grid
+    if src_var in ("v", "vbar", "v_northward"):
+        return ds["lon_v"].values, ds["lat_v"].values
+    # Default: ρ-grid
+    return ds["lon_rho"].values, ds["lat_rho"].values
+
+
+# ---------------------------------------------------------------------------
+# Canonical field iteration
+# ---------------------------------------------------------------------------
+
+def available_fields(meta: SourceMeta) -> Dict[str, str]:
+    """Return {canonical_name: display_label} for all extractable fields."""
+    return {
+        canon: meta.display_label(canon)
+        for canon in meta.available_variables()
+    }
 
 
 def extract_all_fields(
     ds: xr.Dataset,
+    meta: SourceMeta,
     time_idx: int = 0,
-    s_idx: Optional[int] = None,
+    level_idx: int | None = None,
 ) -> Dict[str, Tuple[xr.DataArray, np.ndarray, np.ndarray]]:
-    """Extract all known ROMS fields as 2-D slices.
+    """Extract all available 2-D field slices from a dataset.
 
     Parameters
     ----------
     ds : xr.Dataset
+    meta : SourceMeta
     time_idx : int
-    s_idx : int or None
-        Vertical layer index. Only required if any 3-D field is in the dataset.
+    level_idx : int or None
+        Vertical level index. Required if any 3-D variable is present.
 
     Returns
     -------
     dict[str, (DataArray, lon, lat)]
-        Variable name → (field, lon, lat). Variables not found in *ds* are skipped.
+        Canonical variable name → (field, lon, lat).
     """
     result: Dict[str, Tuple[xr.DataArray, np.ndarray, np.ndarray]] = {}
-    for varname, (_display, _grid, zmatch) in ROMS_FIELD_SPEC.items():
-        if varname not in ds.data_vars:
+    for canon in meta.available_variables():
+        src_var = meta.source_var(canon)
+        da_full = ds[src_var]
+
+        # Skip scalar/metadata-only variables (no spatial dims)
+        if da_full.ndim < 2:
             continue
-        # Only require s_idx for 3-D variables present in the dataset
-        field_s_idx = s_idx if zmatch != "none" else None
-        # If s_idx is None but a 3-D variable is present, raise
-        if zmatch != "none" and s_idx is None:
-            raise ValueError(
-                f"Variable '{varname}' requires s_idx (vertical layer). "
-                f"Pass s_idx= or call extract_field() individually."
+
+        # Determine if variable has a vertical dim and needs level_idx
+        vert_dims = [d for d in da_full.dims if d in (_ROMS_S_RHO, _ROMS_S_W)
+                     or d == meta.coord_map.get("depth", "depth")]
+        needs_level = len(vert_dims) > 0
+
+        try:
+            field_level = level_idx if needs_level else None
+            result[canon] = extract_field(
+                ds, meta, canon, time_idx, field_level,
             )
-        result[varname] = extract_field(ds, varname, time_idx, field_s_idx)
+        except (KeyError, ValueError) as exc:
+            print(f"[SKIP] {canon}: {exc}")
+            continue
+
     return result
 
 
 # ---------------------------------------------------------------------------
-# u/v → ρ-grid interpolation (for current speed)
+# u/v → ρ-grid interpolation (ROMS-specific)
 # ---------------------------------------------------------------------------
 
 def interpolate_uv_to_rho(
     ds: xr.Dataset,
+    meta: SourceMeta,
     time_idx: int = 0,
-    s_idx: int = 0,
+    level_idx: int = 0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Interpolate u and v velocities from staggered grids onto ρ-points.
+    """Interpolate u and v velocities onto ρ-points (ROMS only).
 
     ROMS uses a staggered Arakawa-C grid:
     - u is staggered in xi only (xi_u = xi_rho - 1)
@@ -188,37 +218,46 @@ def interpolate_uv_to_rho(
     Parameters
     ----------
     ds : xr.Dataset
+    meta : SourceMeta
+        Must have ``source_name == "ROMS"``.
     time_idx : int
-    s_idx : int
+    level_idx : int
         Vertical (s_rho) layer index.
 
     Returns
     -------
     (u_rho, v_rho, lon_rho, lat_rho) : tuple of np.ndarray
-        u and v interpolated to ρ-points, plus the ρ-grid coordinates.
 
     Raises
     ------
+    ValueError
+        If the source is not ROMS.
     KeyError
-        If ``"u"`` or ``"v"`` is missing from the dataset.
+        If ``"u"`` or ``"v"`` is missing.
     """
+    if meta.source_name != "ROMS":
+        raise ValueError(
+            f"Staggered-grid interpolation is ROMS-specific. "
+            f"Current source: {meta.source_name}. "
+            f"For CMEMS, uo/vo are already on a common grid — "
+            f"extract them directly with extract_field()."
+        )
+
     if "u" not in ds.data_vars or "v" not in ds.data_vars:
         raise KeyError("Dataset must contain both 'u' and 'v' variables.")
 
-    u_raw = ds["u"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: s_idx}).values  # (eta_rho, xi_u)
-    v_raw = ds["v"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: s_idx}).values  # (eta_v, xi_rho)
+    u_raw = ds["u"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: level_idx}).values
+    v_raw = ds["v"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: level_idx}).values
 
-    # ROMS Arakawa-C: u is staggered in xi only, v is staggered in eta only.
-    # Interpolate each to ρ-points with boundary extrapolation.
     eta_rho, xi_rho = ds.sizes["eta_rho"], ds.sizes["xi_rho"]
 
-    # u: xi_u → xi_rho  (interior average; boundaries copy edge value)
+    # u: xi_u → xi_rho  (interior avg; boundaries copy edge)
     u_rho = np.empty((eta_rho, xi_rho), dtype=u_raw.dtype)
     u_rho[:, 0] = u_raw[:, 0]
     u_rho[:, 1:-1] = 0.5 * (u_raw[:, :-1] + u_raw[:, 1:])
     u_rho[:, -1] = u_raw[:, -1]
 
-    # v: eta_v → eta_rho  (interior average; boundaries copy edge value)
+    # v: eta_v → eta_rho  (interior avg; boundaries copy edge)
     v_rho = np.empty((eta_rho, xi_rho), dtype=v_raw.dtype)
     v_rho[0, :] = v_raw[0, :]
     v_rho[1:-1, :] = 0.5 * (v_raw[:-1, :] + v_raw[1:, :])
@@ -232,58 +271,72 @@ def interpolate_uv_to_rho(
 
 def current_speed(
     ds: xr.Dataset,
+    meta: SourceMeta,
     time_idx: int = 0,
-    s_idx: int = 0,
+    level_idx: int = 0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute current speed (magnitude) on ρ-points.
+    """Compute ocean current speed (magnitude) on a common grid.
+
+    For ROMS: interpolates u/v from staggered grids to ρ-points, then
+    computes sqrt(u² + v²).
+
+    For CMEMS: extracts uo/vo directly (already on the same grid) and
+    computes sqrt(uo² + vo²).
 
     Parameters
     ----------
     ds : xr.Dataset
+    meta : SourceMeta
     time_idx : int
-    s_idx : int
+    level_idx : int
+        Vertical level index.
 
     Returns
     -------
-    (speed, lon_rho, lat_rho) : tuple of np.ndarray
-        Current speed (m/s) and ρ-grid coordinates.
+    (speed, lon, lat) : tuple of np.ndarray
+        Current speed and the grid coordinates.
     """
-    u_rho, v_rho, lon_rho, lat_rho = interpolate_uv_to_rho(ds, time_idx, s_idx)
-    speed = np.sqrt(u_rho**2 + v_rho**2)
-    return speed, lon_rho, lat_rho
+    if meta.source_name == "ROMS":
+        u_rho, v_rho, lon, lat = interpolate_uv_to_rho(ds, meta, time_idx, level_idx)
+        speed = np.sqrt(u_rho**2 + v_rho**2)
+        return speed, lon, lat
+
+    # CMEMS / generic: uo & vo are on the same rectilinear grid
+    da_u, lon, lat = extract_field(ds, meta, "u_current", time_idx, level_idx)
+    da_v, _, _    = extract_field(ds, meta, "v_current", time_idx, level_idx)
+    speed = np.sqrt(da_u.values**2 + da_v.values**2)
+    return speed, lon, lat
 
 
 # ---------------------------------------------------------------------------
-# Batch snapshot plots
+# Batch snapshot plots (source-agnostic)
 # ---------------------------------------------------------------------------
 
 def snapshot_all_fields(
     ds: xr.Dataset,
+    meta: SourceMeta,
     output_dir: str | Path,
     time_idx: int = 0,
-    s_idx: int = 36,
+    level_idx: int = 36,
     cmap: str = "Spectral_r",
     dpi: int = 200,
     show: bool = False,
 ) -> List[Path]:
-    """Plot all available ROMS fields as map snapshots and save to disk.
+    """Plot all available fields as map snapshots and save to disk.
+
+    Works with any recognized data source (ROMS, CMEMS, …).
 
     Parameters
     ----------
     ds : xr.Dataset
-        ROMS dataset.
+    meta : SourceMeta
     output_dir : str or Path
-        Directory for output PNG files.
     time_idx : int
-        Ocean-time index.
-    s_idx : int
-        Vertical layer index (36 = surface layer in a typical 36-level ROMS).
+    level_idx : int
+        Vertical level index.
     cmap : str
-        Colormap name.
     dpi : int
-        Output DPI.
     show : bool
-        If True, display each figure interactively.
 
     Returns
     -------
@@ -297,18 +350,18 @@ def snapshot_all_fields(
 
     saved: List[Path] = []
 
-    for varname, (display_name, _grid, _zmatch) in ROMS_FIELD_SPEC.items():
-        if varname not in ds.data_vars:
-            continue
-
+    for canon, display_label in available_fields(meta).items():
         try:
-            da, lon, lat = extract_field(ds, varname, time_idx, s_idx)
+            da, lon, lat = extract_field(ds, meta, canon, time_idx, level_idx)
         except (KeyError, ValueError) as exc:
-            print(f"[SKIP] {varname}: {exc}")
+            print(f"[SKIP] {canon}: {exc}")
             continue
 
-        title = f"ROMS {varname} — {display_name}\nt={time_idx}, σ={s_idx}"
-        out_path = output_dir / f"roms_{varname}_snapshot.png"
+        title = f"{meta.source_name} {canon} — {display_label}\n"
+        if meta.vertical_type != VerticalType.NONE:
+            title += f"t={time_idx}, level={level_idx}"
+
+        out_path = output_dir / f"{meta.source_name.lower()}_{canon}_snapshot.png"
 
         plot_map(
             da, lon, lat,
@@ -319,6 +372,6 @@ def snapshot_all_fields(
             show=show,
         )
         saved.append(out_path)
-        print(f"[OK] {varname} → {out_path}")
+        print(f"[OK] {canon} → {out_path}")
 
     return saved

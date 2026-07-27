@@ -1,5 +1,5 @@
 """
-Quick demo — exercise the project modules against real NC data.
+Quick demo — exercise all modules against real NC data.
 
 Usage:
     cd d:\ChatWithAI\SCS_data
@@ -9,65 +9,68 @@ Usage:
 import sys
 from pathlib import Path
 
-# Ensure src/ is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src.core.nc_reader import NCReader, group_by_product, product_label
-from src.core.roms_utils import extract_field, current_speed
+from src.core.nc_reader import NCReader
+from src.core.roms_utils import extract_field, current_speed, available_fields
 from src.viz.map_plotter import plot_map
 
-# --- 1. Scan & load ---
 DATA_DIR = Path("D:/ChatWithAI")
 reader = NCReader(DATA_DIR)
 
+# --- 1. Scan & load (auto-detect source) ---
 print("=== Files found ===")
 for _, row in reader.scan_files_with_sizes().iterrows():
     print(f"  {row['name']:<50s} {row['size_mb']:.1f} MB")
 
 reader.load_all()
-print(f"\nLoaded {len(reader)} dataset(s)")
+print(f"Loaded {len(reader)} dataset(s)")
+print(f"Unmatched sources: {reader.unmatched}")
 
-# --- 2. Inspect one dataset ---
+# --- 2. Source metadata ---
 key = list(reader.datasets.keys())[0]
-print(f"\n=== Inspect: {key} ===")
-print(reader.inspect(key))
+meta = reader.meta(key)
+print(f"\n=== Source: {meta.source_name} ===")
+print(f"  Grid type:    {meta.grid_type.name}")
+print(f"  Vertical:     {meta.vertical_type.name}")
+print(f"  Variables:    {meta.available_variables()}")
+print(f"  Coord map:    {meta.coord_map}")
 
-# --- 3. Product grouping ---
-print(f"\n=== Product groups ===")
-for k, flist in reader.product_groups().items():
-    print(f"  {k} ({product_label(k)}): {len(flist)} file(s)")
+# --- 3. Available canonical fields ---
+print(f"\n=== Canonical fields ===")
+for canon, label in available_fields(meta).items():
+    print(f"  {canon:<30s} {label}")
 
-# --- 4. ROMS: extract one field ---
+# --- 4. Extract fields via canonical names ---
 ds = reader[key]
-print(f"\n=== ROMS field extraction ===")
-print(f"Variables in dataset: {list(ds.data_vars.keys())}")
+print(f"\n=== Field extraction (canonical) ===")
+for canon in ["sea_surface_height", "temperature", "salinity",
+              "u_current", "v_current", "u_barotropic", "v_barotropic"]:
+    if meta.has_variable(canon):
+        da, lon, lat = extract_field(ds, meta, canon, time_idx=0, level_idx=36)
+        print(f"  {canon:<25s} shape={da.shape}, range=[{da.values.min():.4g}, {da.values.max():.4g}]")
 
-# Try a few ROMS fields that exist in the dataset
-for varname in ["zeta", "temp", "salt", "u", "v"]:
-    if varname in ds.data_vars:
-        da, lon, lat = extract_field(ds, varname, time_idx=0, s_idx=36)
-        print(f"  {varname}: shape={da.shape}, range=[{da.values.min():.4g}, {da.values.max():.4g}]")
-
-# --- 5. ROMS: current speed ---
-if "u" in ds.data_vars and "v" in ds.data_vars:
-    speed, lon_rho, lat_rho = current_speed(ds, time_idx=0, s_idx=36)
+# --- 5. Current speed (source-aware) ---
+if meta.has_variable("u_current") and meta.has_variable("v_current"):
+    speed, lon_s, lat_s = current_speed(ds, meta, time_idx=0, level_idx=36)
     print(f"\nCurrent speed: shape={speed.shape}, range=[{speed.min():.4g}, {speed.max():.4g}]")
 
 # --- 6. Plot one map ---
-print(f"\n=== Plotting test map ===")
-da, lon, lat = extract_field(ds, "temp", time_idx=0, s_idx=36)
-plot_map(
-    da, lon, lat,
-    title="ROMS Temperature — Surface Layer",
-    cmap="Spectral_r",
-    output_path=Path("output/demo_temp_surface.png"),
-)
-print("  → output/demo_temp_surface.png")
+if meta.has_variable("temperature"):
+    print(f"\n=== Plotting temperature map ===")
+    da, lon, lat = extract_field(ds, meta, "temperature", time_idx=0, level_idx=36)
+    plot_map(
+        da, lon, lat,
+        title=f"{meta.source_name} Temperature — Surface Layer",
+        cmap="Spectral_r",
+        output_path=Path("output/demo_temp_surface.png"),
+    )
+    print("  → output/demo_temp_surface.png")
 
-# --- 7. Batch snapshot ---
-print(f"\n=== Batch snapshot (3 fields) ===")
+# --- 7. Batch snapshots ---
+print(f"\n=== Batch snapshot (all fields) ===")
 from src.core.roms_utils import snapshot_all_fields
-saved = snapshot_all_fields(ds, Path("output"), time_idx=0, s_idx=36)
+saved = snapshot_all_fields(ds, meta, Path("output"), time_idx=0, level_idx=36)
 print(f"\nSaved {len(saved)} figures to output/")
 
 print("\nDone — everything works!")
