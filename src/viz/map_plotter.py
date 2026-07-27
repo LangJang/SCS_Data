@@ -139,13 +139,14 @@ def plot_map(
     # Title
     ax.set_title(title, fontsize=13)
 
-    # Gridlines
-    gl_kw: dict = {"draw_labels": True, "linewidth": 0.3, "alpha": 0.5}
+    # Gridlines (labels disabled by default — Cartopy GEOS compat)
+    gl_kw: dict = {"draw_labels": False, "linewidth": 0.3, "alpha": 0.5}
     if gridline_kw:
         gl_kw.update(gridline_kw)
     gl = ax.gridlines(**gl_kw)
-    gl.top_labels = False
-    gl.right_labels = False
+    if gl_kw.get("draw_labels", False):
+        gl.top_labels = False
+        gl.right_labels = False
 
     fig.tight_layout()
 

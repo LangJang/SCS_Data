@@ -179,12 +179,11 @@ def interpolate_uv_to_rho(
     """Interpolate u and v velocities from staggered grids onto ρ-points.
 
     ROMS uses a staggered Arakawa-C grid:
-    - u is defined at u-points (between ρ-points in x)
-    - v is defined at v-points (between ρ-points in y)
+    - u is staggered in xi only (xi_u = xi_rho - 1)
+    - v is staggered in eta only (eta_v = eta_rho - 1)
 
-    Simple linear interpolation is used:
-        u_rho[i,j] = 0.5 * (u[i,j] + u[i-1,j])
-        v_rho[i,j] = 0.5 * (v[i,j] + v[i,j-1])
+    Interior points are linearly averaged; boundary points copy the
+    nearest edge value. Both outputs have shape (eta_rho, xi_rho).
 
     Parameters
     ----------
@@ -206,15 +205,24 @@ def interpolate_uv_to_rho(
     if "u" not in ds.data_vars or "v" not in ds.data_vars:
         raise KeyError("Dataset must contain both 'u' and 'v' variables.")
 
-    u = ds["u"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: s_idx}).values  # (eta_u, xi_u)
-    v = ds["v"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: s_idx}).values  # (eta_v, xi_v)
+    u_raw = ds["u"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: s_idx}).values  # (eta_rho, xi_u)
+    v_raw = ds["v"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: s_idx}).values  # (eta_v, xi_rho)
 
-    # Interpolate to ρ-points (simple averaging)
-    u_rho = 0.5 * (u[1:, :] + u[:-1, :])          # (eta_rho, xi_u) → average to xi_rho
-    u_rho = 0.5 * (u_rho[:, 1:] + u_rho[:, :-1])  # (eta_rho, xi_rho)
+    # ROMS Arakawa-C: u is staggered in xi only, v is staggered in eta only.
+    # Interpolate each to ρ-points with boundary extrapolation.
+    eta_rho, xi_rho = ds.sizes["eta_rho"], ds.sizes["xi_rho"]
 
-    v_rho = 0.5 * (v[:, 1:] + v[:, :-1])           # (eta_v, xi_rho) → average to eta_rho
-    v_rho = 0.5 * (v_rho[1:, :] + v_rho[:-1, :])   # (eta_rho, xi_rho)
+    # u: xi_u → xi_rho  (interior average; boundaries copy edge value)
+    u_rho = np.empty((eta_rho, xi_rho), dtype=u_raw.dtype)
+    u_rho[:, 0] = u_raw[:, 0]
+    u_rho[:, 1:-1] = 0.5 * (u_raw[:, :-1] + u_raw[:, 1:])
+    u_rho[:, -1] = u_raw[:, -1]
+
+    # v: eta_v → eta_rho  (interior average; boundaries copy edge value)
+    v_rho = np.empty((eta_rho, xi_rho), dtype=v_raw.dtype)
+    v_rho[0, :] = v_raw[0, :]
+    v_rho[1:-1, :] = 0.5 * (v_raw[:-1, :] + v_raw[1:, :])
+    v_rho[-1, :] = v_raw[-1, :]
 
     lon_rho = ds["lon_rho"].values
     lat_rho = ds["lat_rho"].values
