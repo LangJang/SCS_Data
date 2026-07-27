@@ -13,9 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src.core.nc_reader import NCReader
 from src.core.roms_utils import extract_field, current_speed, available_fields
+from src.core.config import DATA_DIR_ROMS
 from src.viz.map_plotter import plot_map
 
-DATA_DIR = Path("D:/ChatWithAI")
+DATA_DIR = DATA_DIR_ROMS
 reader = NCReader(DATA_DIR)
 
 # --- 1. Scan & load (auto-detect source) ---

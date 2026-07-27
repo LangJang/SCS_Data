@@ -12,10 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src.core.nc_reader import NCReader
 from src.core.roms_utils import extract_field
+from src.core.config import DATA_DIR_CMEMS, OUTPUT_DIR
 from src.viz.map_plotter import plot_map
 
-DATA_DIR = Path("D:/ChatWithAI/Downloading_CEMES")
-OUT_DIR  = Path("output/cemes_demo")
+DATA_DIR = DATA_DIR_CMEMS
+OUT_DIR  = OUTPUT_DIR / "cemes_demo"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 reader = NCReader(DATA_DIR)

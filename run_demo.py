@@ -14,13 +14,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src.core.pipeline import MarineDataPipeline
+from src.core.config import DATA_DIR_ROMS, DATA_DIR_CMEMS, OUTPUT_DIR
 
 # ---------------------------------------------------------------------------
-# Configuration — add your data directories here
+# Configuration — see src/core/config.py to change paths
 # ---------------------------------------------------------------------------
-DATA_ROMS   = Path("D:/ChatWithAI")               # ROMS output directory
-DATA_CMEMS  = Path("D:/ChatWithAI/Downloading_CEMES")  # CMEMS downloads
-OUTPUT      = Path("output/unified_demo")
+DATA_ROMS   = DATA_DIR_ROMS
+DATA_CMEMS  = DATA_DIR_CMEMS
+OUTPUT      = OUTPUT_DIR / "unified_demo"
 
 # Pipeline settings
 TIME_IDX    = 0     # first time step
