@@ -12,7 +12,7 @@ plt.rcParams['font.size'] = 11
 plt.rcParams['figure.dpi'] = 100
 
 # Data directory relative to the notebooks/ folder
-DATA_DIR = Path('D:/ChatWithAI/')
+DATA_DIR = Path('"E:/ph_2023-01-01_2023-01-31.nc"')
 OUTPUT_DIR = Path('../output')
 
 files = sorted(DATA_DIR.glob("*.nc"))

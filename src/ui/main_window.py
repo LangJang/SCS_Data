@@ -1,7 +1,18 @@
 """
 Main application window — SCS Marine Environmental Data Tool.
 
-Left-right split layout: data tree + interactive map.
+Three-section vertical layout (ERDDAP-inspired):
+
+    ┌──────────────────────────────────────────┐
+    │  SearchSection — "Find the Data"         │
+    ├──────────────────────────────────────────┤
+    │  ParamPanel  |  PreviewSection           │
+    │  "Make a Graph"                          │
+    ├──────────────────────────────────────────┤
+    │  "Plot & Export"   [Plot]  [Export]      │
+    └──────────────────────────────────────────┘
+
+Workflow: search → select dataset → configure params → Plot → Export.
 """
 
 from __future__ import annotations
@@ -11,43 +22,34 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QLabel, QStatusBar, QMenuBar, QMenu, QFileDialog, QMessageBox,
-    QPushButton,
+    QPushButton, QGroupBox, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QSettings, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QSettings, QTimer
 from PyQt6.QtGui import QAction, QKeySequence
 
-from src.core.pipeline import MarineDataPipeline
-from src.core.roms_utils import extract_field
+import numpy as np
+import pandas as pd
+import xarray as xr
+
 from src.core.canonical import SourceMeta
-from src.ui.widgets.map_canvas import MapCanvas
-from src.ui.widgets.data_tree import DataTree
-from src.ui.widgets.control_bar import ControlBar, compute_depth_validity
-from src.ui.widgets.timeseries_popup import TimeseriesPopup
+from src.core.roms_utils import extract_field
+from src.core.config_reader import AppConfig, DatasetConfig, load_config
+from src.ui.widgets.search_section import SearchSection
+from src.ui.widgets.param_section import ParamPanel, PreviewSection
 from src.ui.widgets.export_dialog import ExportDialog
 
 
 class MainWindow(QMainWindow):
-    """Top-level application window.
-
-    Layout::
-
-        ┌────────────┬──────────────────────────┐
-        │  DataTree  │                          │
-        │            │     MapCanvas            │
-        │            │                          │
-        │  (meta)    ├──────────────────────────┤
-        │            │     ControlBar           │
-        └────────────┴──────────────────────────┘
-    """
+    """Top-level application window."""
 
     WINDOW_TITLE = "SCS Marine Environmental Data Tool"
-    DEFAULT_SIZE = (1400, 900)
+    DEFAULT_SIZE = (1500, 950)
 
     def __init__(self) -> None:
         super().__init__()
-        self._pipeline: MarineDataPipeline | None = None
-        self._current_key: str = ""
-        self._current_canon: str = ""
+        self._config = load_config()
+        self._current_ds_cfg: DatasetConfig | None = None
+        self._current_ds: xr.Dataset | None = None
         self._current_meta: SourceMeta | None = None
         self._selected_bbox: tuple[float, float, float, float] | None = None
 
@@ -65,62 +67,52 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         self.setCentralWidget(central)
-        root = QHBoxLayout(central)
-        root.setContentsMargins(4, 4, 4, 4)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(6)
 
-        # ---- Left: DataTree ----
-        self._data_tree = DataTree()
+        # ---- Section 1: Find the Data ----
+        self._search_section = SearchSection(self._config)
+        root.addWidget(self._search_section)
 
-        # ---- Right: Map + Controls ----
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        # ---- Section 2: Make a Graph (left params | right preview) ----
+        graph_group = QGroupBox("Make a Graph")
+        graph_layout = QHBoxLayout(graph_group)
 
-        # Map
-        self._map_canvas = MapCanvas()
-        right_splitter.addWidget(self._map_canvas)
+        self._param_panel = ParamPanel(self._config)
+        self._preview = PreviewSection()
 
-        # Navigation toolbar
-        toolbar = self._map_canvas.create_toolbar(self)
-        toolbar.setMaximumHeight(32)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self._param_panel)
+        splitter.addWidget(self._preview)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
 
-        # Control bar (time + depth sliders)
-        self._control_bar = ControlBar()
+        graph_layout.addWidget(splitter)
+        root.addWidget(graph_group, 1)  # stretch = 1 (takes remaining space)
 
-        # Buttons
-        self._draw_btn = QPushButton("&Generate Map")
-        self._draw_btn.setEnabled(False)
-        self._draw_btn.setShortcut(QKeySequence("Ctrl+G"))
-        self._draw_btn.setToolTip("Render the map with current selections (Ctrl+G)")
+        # ---- Section 3: Plot & Export ----
+        action_group = QGroupBox("Plot & Export")
+        action_layout = QHBoxLayout(action_group)
 
-        self._export_btn = QPushButton("Export Subset...")
+        self._plot_btn = QPushButton("&Plot")
+        self._plot_btn.setShortcut(QKeySequence("Ctrl+G"))
+        self._plot_btn.setToolTip("Generate the map with current settings (Ctrl+G)")
+        self._plot_btn.setMinimumHeight(36)
+        self._plot_btn.setEnabled(False)
+
+        self._export_btn = QPushButton("&Export")
+        self._export_btn.setShortcut(QKeySequence("Ctrl+E"))
+        self._export_btn.setToolTip("Export the current view (Ctrl+E)")
+        self._export_btn.setMinimumHeight(36)
         self._export_btn.setEnabled(False)
 
-        self._save_png_btn = QPushButton("Save Map PNG")
-        self._save_png_btn.setEnabled(False)
+        action_layout.addStretch()
+        action_layout.addWidget(self._plot_btn)
+        action_layout.addWidget(self._export_btn)
+        action_layout.addStretch()
 
-        ctrl_row = QWidget()
-        ctrl_layout = QHBoxLayout(ctrl_row)
-        ctrl_layout.setContentsMargins(4, 4, 4, 4)
-        ctrl_layout.addWidget(self._control_bar, 1)
-        ctrl_layout.addWidget(self._draw_btn)
-        ctrl_layout.addWidget(self._export_btn)
-        ctrl_layout.addWidget(self._save_png_btn)
-
-        # Compose right side
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.addWidget(toolbar)
-        right_layout.addWidget(right_splitter)
-        right_layout.addWidget(ctrl_row)
-        right_splitter.setStretchFactor(0, 1)
-
-        # ---- Main splitter (left | right) ----
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_splitter.addWidget(self._data_tree)
-        main_splitter.addWidget(right_widget)
-        main_splitter.setStretchFactor(0, 1)
-        main_splitter.setStretchFactor(1, 3)
-        root.addWidget(main_splitter)
+        root.addWidget(action_group)
 
         # ---- Menus ----
         self._build_menus()
@@ -128,39 +120,32 @@ class MainWindow(QMainWindow):
         # ---- Status bar ----
         self._status = QStatusBar()
         self.setStatusBar(self._status)
-        self._status.showMessage("Ready — File → Open Data Folder to begin.")
+        self._status.showMessage(
+            "Ready — search for a dataset to begin."
+        )
 
     def _build_menus(self) -> None:
         mb = self.menuBar()
 
-        # File
         file_menu = mb.addMenu("&File")
 
-        open_roms = QAction("Open ROMS Folder...", self)
-        open_roms.setShortcut("Ctrl+R")
-        open_roms.triggered.connect(lambda: self._on_open_folder("roms"))
-        file_menu.addAction(open_roms)
+        gen_action = QAction("&Plot", self)
+        gen_action.setShortcut(QKeySequence("Ctrl+G"))
+        gen_action.triggered.connect(self._on_plot)
+        file_menu.addAction(gen_action)
 
-        open_cmems = QAction("Open CMEMS Folder...", self)
-        open_cmems.setShortcut("Ctrl+M")
-        open_cmems.triggered.connect(lambda: self._on_open_folder("cmems"))
-        file_menu.addAction(open_cmems)
-
-        file_menu.addSeparator()
-
-        generate_action = QAction("Generate Map", self)
-        generate_action.setShortcut(QKeySequence("Ctrl+G"))
-        generate_action.triggered.connect(self._on_generate_map)
-        file_menu.addAction(generate_action)
+        export_action = QAction("&Export...", self)
+        export_action.setShortcut(QKeySequence("Ctrl+E"))
+        export_action.triggered.connect(self._on_export)
+        file_menu.addAction(export_action)
 
         file_menu.addSeparator()
 
-        exit_action = QAction("Exit", self)
-        exit_action.setShortcut("Ctrl+Q")
+        exit_action = QAction("E&xit", self)
+        exit_action.setShortcut(QKeySequence("Ctrl+Q"))
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        # Help
         help_menu = mb.addMenu("&Help")
         about_action = QAction("About", self)
         about_action.triggered.connect(self._on_about)
@@ -171,180 +156,208 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _connect_signals(self) -> None:
-        self._data_tree.variable_selected.connect(self._on_variable_selected)
-        self._control_bar.controls_changed.connect(self._on_controls_changed)
-        self._draw_btn.clicked.connect(self._on_generate_map)
-        self._save_png_btn.clicked.connect(self._on_save_png)
-        self._export_btn.clicked.connect(self._on_export_subset)
-        self._map_canvas.map_clicked.connect(self._on_map_clicked)
-        self._map_canvas.region_selected.connect(self._on_region_selected)
+        self._search_section.dataset_selected.connect(self._on_dataset_selected)
+        self._param_panel.params_changed.connect(self._on_params_changed)
+        self._plot_btn.clicked.connect(self._on_plot)
+        self._export_btn.clicked.connect(self._on_export)
+        self._preview.canvas.map_clicked.connect(self._on_map_clicked)
+        self._preview.canvas.region_selected.connect(self._on_region_selected)
 
     # ------------------------------------------------------------------
-    # Slots — data loading
+    # Slots — dataset selection
     # ------------------------------------------------------------------
 
-    def _on_open_folder(self, source_hint: str) -> None:
-        """Open a data folder, auto-detect sources, and populate the tree."""
-        path = QFileDialog.getExistingDirectory(
-            self, f"Select {source_hint.upper()} Data Folder",
-            "",
-        )
-        if not path:
-            return
+    def _on_dataset_selected(self, ds_cfg: DatasetConfig) -> None:
+        """A dataset card was clicked in the search results."""
+        self._current_ds_cfg = ds_cfg
+        self._param_panel.set_dataset(ds_cfg)
+        self._current_ds = None  # force reload on next Plot
+        self._current_meta = None
 
-        self._status.showMessage(f"Loading data from {path} ...")
-        try:
-            self._pipeline = MarineDataPipeline(path)
-            self._pipeline.load_all()
-            self._data_tree.load_pipeline(self._pipeline)
-        except Exception as e:
-            QMessageBox.warning(self, "Load Error", str(e))
-            self._status.showMessage("Ready.")
-            return
-
-        # Enable buttons
-        self._draw_btn.setEnabled(True)
+        self._plot_btn.setEnabled(True)
         self._export_btn.setEnabled(True)
-        self._save_png_btn.setEnabled(True)
 
-        sources = self._pipeline.sources()
-        summary = ", ".join(f"{s}: {len(v)} files" for s, v in sources.items())
-        self._status.showMessage(f"Loaded: {summary} — select a variable, then click Generate Map.")
-
-    # ------------------------------------------------------------------
-    # Slots — variable selection (no auto-render)
-    # ------------------------------------------------------------------
-
-    def _on_variable_selected(self, key: str, canon: str, meta, ds) -> None:
-        """Variable clicked — configure controls only.  User must click Generate Map."""
-        self._current_key = key
-        self._current_canon = canon
-        self._current_meta = meta
-
-        # Pre-compute depth validity
-        depth_cache = compute_depth_validity(ds, meta)
-
-        # Configure control bar
-        time_dim = meta.time_dim
-        time_vals = ds[time_dim].values if time_dim and time_dim in ds.coords else ds[time_dim].values
-        self._control_bar.configure(ds, meta, time_vals, depth_cache)
-        self._control_bar.set_variable_depth_cache(canon)
-
-        self._map_canvas.show_loading(meta.display_label(canon))
         self._status.showMessage(
-            f"Ready: {meta.display_label(canon)} ({key}) — "
-            f"adjust time/depth, then Ctrl+G to render."
+            f"Selected: {ds_cfg.name} — configure settings, then click Plot."
         )
 
-    def _on_controls_changed(self, time_idx: int, level_idx: int) -> None:
-        """Slider moved — update status only.  No auto-render."""
-        pass  # User controls the render timing via Generate Map button
+    def _on_params_changed(self) -> None:
+        """Any parameter changed — refresh preview if data is loaded."""
+        if self._current_ds is None or self._current_meta is None:
+            return
+        self._refresh_preview()
 
     # ------------------------------------------------------------------
-    # Generate Map (explicit user action)
+    # Slots — Plot
     # ------------------------------------------------------------------
 
-    def _on_generate_map(self) -> None:
-        """User clicked Generate Map — show loading and render after 3s delay."""
-        if not self._current_key or not self._current_canon or not self._current_meta:
-            self._status.showMessage("Select a variable first.")
+    def _on_plot(self) -> None:
+        """Load data, apply filters, render preview map."""
+        if self._current_ds_cfg is None:
+            self._status.showMessage("Search and select a dataset first.")
             return
 
-        self._map_canvas.show_loading(
-            self._current_meta.display_label(self._current_canon)
-        )
-        self._status.showMessage(f"Generating {self._current_canon} ...")
-        QTimer.singleShot(3000, self._render_map)
+        self._plot_btn.setEnabled(False)
+        self._status.showMessage("Loading data ...")
 
-    # ------------------------------------------------------------------
-    # Render
-    # ------------------------------------------------------------------
+        QTimer.singleShot(500, self._do_plot)  # brief yield for UI update
 
-    def _render_map(self) -> None:
-        """Extract the current field and update the map canvas."""
-        key = self._current_key
-        canon = self._current_canon
+    def _do_plot(self) -> None:
+        """Load data, then refresh preview."""
+        cfg = self._current_ds_cfg
+
+        # Load the NetCDF file (only if not already loaded for this dataset)
+        if self._current_ds is None:
+            try:
+                data_path = cfg.resolve_path(Path("."))
+                nc_files = sorted(data_path.glob(cfg.file_pattern))
+                if not nc_files:
+                    raise FileNotFoundError(
+                        f"No files matching '{cfg.file_pattern}' in {data_path}"
+                    )
+                self._current_ds = xr.open_dataset(nc_files[0], engine="netcdf4")
+            except Exception as e:
+                self._status.showMessage(f"Load error: {e}")
+                self._plot_btn.setEnabled(True)
+                return
+
+            # Detect source and build meta
+            from src.core.adapters import detect_source
+            adapter_cls = detect_source(self._current_ds, str(nc_files[0]))
+            if adapter_cls is None:
+                self._status.showMessage("Could not detect data source.")
+                self._plot_btn.setEnabled(True)
+                return
+            adapter = adapter_cls()
+            self._current_meta = adapter.adapt(self._current_ds)
+
+            # Populate depth levels from loaded data
+            self._param_panel.set_depth_levels(self._current_ds, self._current_meta)
+
+        self._refresh_preview()
+        self._plot_btn.setEnabled(True)
+
+    def _refresh_preview(self) -> None:
+        """Re-extract field with current params and update the preview map."""
+        if self._current_ds is None or self._current_meta is None:
+            return
+
+        ds = self._current_ds
         meta = self._current_meta
-        if meta is None or self._pipeline is None:
-            return
+        cfg = self._current_ds_cfg
+        canon = self._param_panel.variable
 
-        ds = self._pipeline.ds_for(key)
-        time_idx = self._control_bar.time_idx
-        level_idx = self._control_bar.level_idx
+        time_idx = self._resolve_time_index(ds, meta)
+        level_idx = self._param_panel.depth_index
 
+        # Extract field
         try:
             da, lon, lat = extract_field(ds, meta, canon, time_idx, level_idx)
-        except (KeyError, ValueError) as e:
+        except Exception as e:
             self._status.showMessage(f"Extract error: {e}")
             return
 
-        title = f"{meta.source_name} — {meta.display_label(canon)}"
+        # Apply spatial subset
+        da = _apply_spatial_mask(da, lon, lat,
+                                  self._param_panel.north,
+                                  self._param_panel.south,
+                                  self._param_panel.east,
+                                  self._param_panel.west)
+
+        # Compute padded extent for zoom
+        west, east = self._param_panel.west, self._param_panel.east
+        south, north = self._param_panel.south, self._param_panel.north
+        pad_lon = (east - west) * 0.15
+        pad_lat = (north - south) * 0.15
+        extent = (west - pad_lon, east + pad_lon, south - pad_lat, north + pad_lat)
+
+        # Render
+        title = f"{cfg.source} — {meta.display_label(canon)}"
+        cmap = self._param_panel.cmap
         unit = meta.standard_units(canon)
 
-        self._map_canvas.update_map(da, lon, lat, title=title, cmap="Spectral_r", unit=unit)
+        self._preview.update_preview(da, lon, lat, title=title, cmap=cmap, unit=unit,
+                                      extent=extent)
+
         self._status.showMessage(
-            f"{key}  →  {canon}  |  time={time_idx}  level={level_idx}"
+            f"{cfg.name}  →  {canon}  "
+            f"({self._param_panel.time_start_str})  "
+            f"cmap={cmap}"
         )
+
+    # ------------------------------------------------------------------
+    # Slots — Export
+    # ------------------------------------------------------------------
+
+    def _on_export(self) -> None:
+        """Open the export dialog."""
+        if self._current_ds is None or self._current_meta is None:
+            self._status.showMessage("Plot a dataset first.")
+            return
+
+        settings = QSettings("SCS_Data", "SCS_Marine_Tool")
+        last_dir = settings.value("export/last_dir", "")
+
+        dlg = ExportDialog(
+            self,
+            self._current_ds,
+            self._current_meta,
+            self._param_panel.variable,
+            self._resolve_time_index(self._current_ds, self._current_meta),
+            self._param_panel.depth_index,
+            north=self._param_panel.north,
+            south=self._param_panel.south,
+            east=self._param_panel.east,
+            west=self._param_panel.west,
+            auto_name=self._build_auto_name(),
+            default_dir=last_dir,
+        )
+        if dlg.exec():  # Accepted = truthy
+            settings.setValue("export/last_dir", dlg.save_dir)
 
     # ------------------------------------------------------------------
     # Slots — map interaction
     # ------------------------------------------------------------------
 
     def _on_map_clicked(self, lon: float, lat: float) -> None:
-        """Map clicked — open time-series popup."""
-        if self._pipeline is None or self._current_meta is None:
-            self._status.showMessage("Load data first.")
-            return
-
-        ds = self._pipeline.ds_for(self._current_key)
-        popup = TimeseriesPopup(
-            self, ds, self._current_meta,
-            self._current_canon, lon, lat,
-        )
-        popup.exec()
+        self._status.showMessage(f"Clicked: ({lon:.4f}, {lat:.4f})")
 
     def _on_region_selected(self, lon_min, lon_max, lat_min, lat_max) -> None:
-        """Region selected on map — store for export."""
         self._selected_bbox = (lon_min, lon_max, lat_min, lat_max)
         self._status.showMessage(
-            f"Region selected: lon=[{lon_min:.4f}, {lon_max:.4f}]  "
-            f"lat=[{lat_min:.4f}, {lat_max:.4f}] — use Export Subset to save"
+            f"Region: lon=[{lon_min:.2f}, {lon_max:.2f}]  "
+            f"lat=[{lat_min:.2f}, {lat_max:.2f}]"
         )
 
     # ------------------------------------------------------------------
-    # Slots — export
+    # Helpers
     # ------------------------------------------------------------------
 
-    def _on_save_png(self) -> None:
-        """Save the current map view as a PNG file."""
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Map as PNG", "map_snapshot.png",
-            "PNG Images (*.png)",
-        )
-        if not path:
-            return
-        try:
-            self._map_canvas.figure.savefig(path, dpi=200, bbox_inches="tight")
-            self._status.showMessage(f"Saved: {path}")
-        except Exception as e:
-            QMessageBox.warning(self, "Save Error", str(e))
+    def _resolve_time_index(self, ds: xr.Dataset, meta: SourceMeta) -> int:
+        """Find the time index closest to the selected start date."""
+        target = self._param_panel.time_start_str
+        time_dim = meta.time_dim
+        if not time_dim or time_dim not in ds.coords:
+            return 0
+        t_vals = ds[time_dim].values
+        target_ns = pd.Timestamp(target).asm8.astype("datetime64[ns]").astype(np.int64)
+        t_ns = t_vals.astype("datetime64[ns]").astype(np.int64)
+        return int(np.argmin(np.abs(t_ns - target_ns)))
 
-    def _on_export_subset(self) -> None:
-        """Open the export dialog for the current variable selection."""
-        if self._pipeline is None or self._current_meta is None:
-            self._status.showMessage("Select a variable first.")
-            return
+    def _build_auto_name(self) -> str:
+        """Build auto filename: Variable_StartDate_EndDate_Depth."""
+        var = self._param_panel.variable
+        t1 = self._param_panel.time_start_str
+        t2 = self._param_panel.time_end_str
+        # Depth info from the combo label (e.g. "0 m" or "s_rho[44] (surface)")
+        depth_text = self._param_panel._depth_combo.currentText()
+        depth_part = depth_text.split()[0]  # first word only (e.g. "0", "s_rho[44]")
+        depth_part = depth_part.replace(".", "p")  # avoid double extension
+        return f"{var}_{t1}_{t2}_{depth_part}"
 
-        ds = self._pipeline.ds_for(self._current_key)
-
-        dlg = ExportDialog(
-            self, ds, self._current_meta,
-            self._current_canon,
-            self._control_bar.time_idx,
-            self._control_bar.level_idx,
-            bbox=self._selected_bbox,
-        )
-        dlg.exec()
+    # ------------------------------------------------------------------
+    # Misc
+    # ------------------------------------------------------------------
 
     def _on_about(self) -> None:
         QMessageBox.about(
@@ -354,10 +367,6 @@ class MainWindow(QMainWindow):
             "Data sources: ROMS (model output) + CMEMS (Copernicus Marine)\n"
             "Built with Python 3.11 + PyQt6 + Cartopy.",
         )
-
-    # ------------------------------------------------------------------
-    # Settings persistence
-    # ------------------------------------------------------------------
 
     def _restore_settings(self) -> None:
         settings = QSettings("SCS_Data", "SCS_Marine_Tool")
@@ -369,3 +378,28 @@ class MainWindow(QMainWindow):
         settings = QSettings("SCS_Data", "SCS_Marine_Tool")
         settings.setValue("window/geometry", self.saveGeometry())
         super().closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+def _apply_spatial_mask(da, lon, lat, north, south, east, west):
+    """Mask a DataArray outside the given geographic bounds.
+
+    NaN-masks grid cells whose centre is outside [west, east] × [south, north].
+    """
+    import numpy as np
+
+    vals = da.values.astype(float)
+
+    if lon.ndim == 2 and lat.ndim == 2:
+        mask = (lon < west) | (lon > east) | (lat < south) | (lat > north)
+    else:
+        # 1-D coords: broadcast
+        lon2d, lat2d = np.meshgrid(lon, lat)
+        mask = (lon2d < west) | (lon2d > east) | (lat2d < south) | (lat2d > north)
+
+    vals[mask] = np.nan
+    da.values = vals
+    return da

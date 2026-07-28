@@ -1,0 +1,343 @@
+# SCS Marine Data Tool — Dataset Registry
+# Each dataset entry defines metadata for data discovery and plot configuration.
+
+datasets:
+  # ===========================================================================
+  # Standardized datasets — unified 14 depth levels (0–400 m), 0.05° grid
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Standardized ROMS
+  # ---------------------------------------------------------------------------
+  - name: "ROMS Standardized (0–400 m, 0.05°)"
+    source: "ROMS-Standard"
+    keywords:
+      - temperature
+      - salinity
+      - current
+      - velocity
+      - roms
+      - standardized
+      - depth-level
+    variables:
+      - temperature
+      - salinity
+      - u_current
+      - v_current
+      - w_velocity
+    resolution:
+      default: 0.05
+      available: [0.05, 0.1, 0.25]
+    spatial:
+      lon: { min: 90.12, max: 133.78 }
+      lat: { min: 0.80, max: 30.38 }
+    temporal:
+      start: 2023-01-01
+      end: 2023-01-31
+      frequency: daily
+    vertical:
+      type: depth
+      layers: 14
+      range: [0, 400]
+    path: "D:/ChatWithAI/Downloading_CEMES/output/roms/"
+    file_pattern: "roms_avg_*.nc"
+
+  - name: "ROMS Rectilinear (0–400 m, 0.05°)"
+    source: "ROMS-Rectilinear"
+    keywords:
+      - temperature
+      - salinity
+      - current
+      - roms
+      - rectilinear
+      - regridded
+      - standardized
+    variables:
+      - temperature
+      - salinity
+      - u_current
+      - v_current
+      - w_velocity
+    resolution:
+      default: 0.05
+      available: [0.05, 0.1, 0.25]
+    spatial:
+      lon: { min: 90.25, max: 133.80 }
+      lat: { min: 1.00, max: 30.25 }
+    temporal:
+      start: 2023-01-01
+      end: 2023-01-31
+      frequency: daily
+    vertical:
+      type: depth
+      layers: 14
+      range: [0, 400]
+    path: "D:/ChatWithAI/Downloading_CEMES/output/roms/"
+    file_pattern: "roms_rectilinear_005deg.nc"
+
+  # ---------------------------------------------------------------------------
+  # Standardized CMEMS
+  # ---------------------------------------------------------------------------
+  - name: "CMEMS Standardized — DO & Chlorophyll (0–400 m, 0.05°)"
+    source: "CMEMS"
+    keywords:
+      - chlorophyll
+      - oxygen
+      - dissolved oxygen
+      - cmems
+      - standardized
+      - depth-level
+    variables:
+      - chlorophyll
+      - dissolved_oxygen
+    resolution:
+      default: 0.05
+      available: [0.05, 0.1, 0.25]
+    spatial:
+      lon: { min: 90.0, max: 134.5 }
+      lat: { min: -0.5, max: 30.0 }
+    temporal:
+      start: 2023-01-01
+      end: 2023-12-31
+      frequency: daily
+    vertical:
+      type: depth
+      layers: 14
+      range: [0, 400]
+    path: "D:/ChatWithAI/Downloading_CEMES/output/"
+    file_pattern: "SCS_cmems_do_chl.nc"
+
+  - name: "CMEMS Standardized — Nutrients (0–400 m, 0.05°)"
+    source: "CMEMS"
+    keywords:
+      - nitrate
+      - phosphate
+      - silicate
+      - nutrient
+      - cmems
+      - standardized
+      - depth-level
+    variables:
+      - nitrate
+      - phosphate
+      - silicate
+    resolution:
+      default: 0.05
+      available: [0.05, 0.1, 0.25]
+    spatial:
+      lon: { min: 90.0, max: 134.5 }
+      lat: { min: -0.5, max: 30.0 }
+    temporal:
+      start: 2023-01-01
+      end: 2023-12-31
+      frequency: daily
+    vertical:
+      type: depth
+      layers: 14
+      range: [0, 400]
+    path: "D:/ChatWithAI/Downloading_CEMES/output/"
+    file_pattern: "SCS_cmems_no3_po4_si.nc"
+
+  - name: "CMEMS Standardized — pH (0–400 m, 0.05°)"
+    source: "CMEMS"
+    keywords:
+      - ph
+      - acidity
+      - cmems
+      - standardized
+      - depth-level
+    variables:
+      - ph
+    resolution:
+      default: 0.05
+      available: [0.05, 0.1, 0.25]
+    spatial:
+      lon: { min: 90.0, max: 134.5 }
+      lat: { min: -0.5, max: 30.0 }
+    temporal:
+      start: 2023-01-01
+      end: 2023-12-31
+      frequency: daily
+    vertical:
+      type: depth
+      layers: 14
+      range: [0, 400]
+    path: "D:/ChatWithAI/Downloading_CEMES/output/"
+    file_pattern: "SCS_cmems_ph.nc"
+
+  # ===========================================================================
+  # Original (raw) datasets — kept for backward reference
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # ROMS (original sigma-coordinate)
+  # ---------------------------------------------------------------------------
+  - name: "ROMS SCS Daily Average (raw sigma)"
+    hidden: true
+    source: "ROMS"
+    keywords:
+      - temperature
+      - salinity
+      - current
+      - velocity
+      - sea surface height
+      - roms
+      - daily
+    variables:
+      - temperature
+      - salinity
+      - u_current
+      - v_current
+      - w_velocity
+      - sea_surface_height
+      - u_barotropic
+      - v_barotropic
+    resolution:
+      default: 0.05
+      available: [0.05, 0.1, 0.25, 0.5]
+    spatial:
+      lon: { min: 90.12, max: 133.78 }
+      lat: { min: 0.80, max: 30.38 }
+    temporal:
+      start: 2023-01-01
+      end: 2023-01-31
+      frequency: daily
+    vertical:
+      type: sigma
+      layers: 45
+    path: "data/"
+    file_pattern: "roms_avg_*.nc"
+
+  # ---------------------------------------------------------------------------
+  # CMEMS — Biogeochemical
+  # ---------------------------------------------------------------------------
+  - name: "CMEMS Dissolved Oxygen & Chlorophyll"
+    hidden: true
+    source: "CMEMS"
+    keywords:
+      - chlorophyll
+      - oxygen
+      - dissolved oxygen
+      - cmems
+      - biogeochemical
+    variables:
+      - chlorophyll
+      - dissolved_oxygen
+    resolution:
+      default: 0.25
+      available: [0.25, 0.5]
+    spatial:
+      lon: { min: 90.0, max: 134.5 }
+      lat: { min: -0.5, max: 30.0 }
+    temporal:
+      start: 2023-01-01
+      end: 2025-12-31
+      frequency: daily
+    vertical:
+      type: depth
+      layers: 75
+      range: [0.5, 5902.1]
+    path: "D:/ChatWithAI/Downloading_CEMES/"
+    file_pattern: "SCS_BGC_DO_CHL_2025.nc"
+
+  - name: "CMEMS Nitrate, Phosphate & Silicate"
+    hidden: true
+    source: "CMEMS"
+    keywords:
+      - nitrate
+      - phosphate
+      - silicate
+      - nutrient
+      - cmems
+      - biogeochemical
+    variables:
+      - nitrate
+      - phosphate
+      - silicate
+    resolution:
+      default: 0.25
+      available: [0.25, 0.5]
+    spatial:
+      lon: { min: 90.0, max: 134.5 }
+      lat: { min: -0.5, max: 30.0 }
+    temporal:
+      start: 2023-01-01
+      end: 2025-12-31
+      frequency: daily
+    vertical:
+      type: depth
+      layers: 75
+      range: [0.5, 5902.1]
+    path: "D:/ChatWithAI/Downloading_CEMES/"
+    file_pattern: "SCS_BGC_no3_po4_si_2023-2025.nc"
+
+  - name: "CMEMS pH"
+    hidden: true
+    source: "CMEMS"
+    keywords:
+      - ph
+      - acidity
+      - cmems
+      - biogeochemical
+    variables:
+      - ph
+    resolution:
+      default: 0.25
+      available: [0.25, 0.5]
+    spatial:
+      lon: { min: 90.0, max: 134.5 }
+      lat: { min: -0.5, max: 30.0 }
+    temporal:
+      start: 2023-01-01
+      end: 2025-12-31
+      frequency: daily
+    vertical:
+      type: depth
+      layers: 50
+      range: [0.5, 5727.9]
+    path: "D:/ChatWithAI/Downloading_CEMES/"
+    file_pattern: "SCS_BGC_PH_2023-2025.nc"
+
+# ---------------------------------------------------------------------------
+# Preset regions for quick spatial selection
+# ---------------------------------------------------------------------------
+preset_regions:
+  - name: "South China Sea (Full)"
+    north: 30.0
+    south: -0.5
+    east: 134.5
+    west: 90.0
+  - name: "Northern SCS"
+    north: 25.0
+    south: 16.0
+    east: 122.0
+    west: 105.0
+  - name: "Nansha (Spratly)"
+    north: 12.0
+    south: 3.0
+    east: 118.0
+    west: 108.0
+  - name: "Xisha (Paracel)"
+    north: 18.0
+    south: 15.0
+    east: 113.0
+    west: 110.0
+  - name: "Beibu Gulf"
+    north: 22.0
+    south: 17.0
+    east: 110.0
+    west: 105.0
+
+# ---------------------------------------------------------------------------
+# Color styles
+# ---------------------------------------------------------------------------
+color_styles:
+  - viridis
+  - plasma
+  - inferno
+  - turbo
+  - Spectral_r
+  - RdYlBu_r
+  - coolwarm
+  - Greens
+  - Blues

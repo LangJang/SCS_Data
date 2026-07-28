@@ -125,12 +125,18 @@ class MapCanvas(FigureCanvasQTAgg):
         title: str = "",
         cmap: str = "",
         unit: str = "",
+        extent: tuple[float, float, float, float] | None = None,
     ) -> None:
         """Replace the current map with a new 2-D field.
 
         Completely replaces the axes to avoid colorbar accumulation
         (which caused the map to shrink on each redraw).  Uses
         ``rasterized=True`` on the data mesh for smooth window resize.
+
+        Parameters
+        ----------
+        extent : (west, east, south, north) or None
+            If provided, zoom the map to this geographic extent.
         """
         # Resolve coordinates
         if lon is None:
@@ -172,6 +178,10 @@ class MapCanvas(FigureCanvasQTAgg):
 
         # ---- Title ----
         self._ax.set_title(title, fontsize=13)
+
+        # ---- Zoom to extent ----
+        if extent is not None:
+            self._ax.set_extent(extent, crs=ccrs.PlateCarree())
 
         # Re-attach rectangle selector (new axes = new selector)
         self._connect_rectangle_selector()

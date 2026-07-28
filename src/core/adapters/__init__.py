@@ -7,10 +7,21 @@ into the canonical variable/coordinate schema.
 
 from src.core.adapters.base import DataSourceAdapter
 from src.core.adapters.roms_adapter import ROMSAdapter
+from src.core.adapters.standard_roms_adapter import StandardROMSAdapter
+from src.core.adapters.rectilinear_roms_adapter import RectilinearROMSAdapter
 from src.core.adapters.cmems_adapter import CMEMSAdapter
 
 # Ordered by priority: earlier adapters are tried first in detect()
-REGISTERED_ADAPTERS = [ROMSAdapter, CMEMSAdapter]
+# StandardROMSAdapter: ROMS with depth (no s_rho) on 2-D curvilinear grid
+# ROMSAdapter:          ROMS with s_rho on 2-D curvilinear grid (legacy)
+# RectilinearROMSAdapter: ROMS on 1-D rectilinear grid (regridded)
+# CMEMSAdapter:         CMEMS / any CF-compliant 1-D data
+REGISTERED_ADAPTERS = [
+    StandardROMSAdapter,
+    ROMSAdapter,
+    RectilinearROMSAdapter,
+    CMEMSAdapter,
+]
 
 # Expose a convenience function
 def detect_source(ds, file_path=None):

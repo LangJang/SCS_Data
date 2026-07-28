@@ -114,7 +114,7 @@ def _resolve_coords(
     ROMS uses staggered grids: u/ubar are on lon_u/lat_u, v/vbar on lon_v/lat_v.
     All other variables use lon_rho/lat_rho.
     """
-    if meta.source_name == "ROMS":
+    if meta.source_name in ("ROMS", "ROMS-Standard"):
         return _resolve_roms_coords(ds, src_var)
     else:
         # Generic: use canonical lon/lat
@@ -236,7 +236,7 @@ def interpolate_uv_to_rho(
     KeyError
         If ``"u"`` or ``"v"`` is missing.
     """
-    if meta.source_name != "ROMS":
+    if meta.source_name not in ("ROMS", "ROMS-Standard"):
         raise ValueError(
             f"Staggered-grid interpolation is ROMS-specific. "
             f"Current source: {meta.source_name}. "
@@ -247,8 +247,11 @@ def interpolate_uv_to_rho(
     if "u" not in ds.data_vars or "v" not in ds.data_vars:
         raise KeyError("Dataset must contain both 'u' and 'v' variables.")
 
-    u_raw = ds["u"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: level_idx}).values
-    v_raw = ds["v"].isel({_ROMS_TIME: time_idx, _ROMS_S_RHO: level_idx}).values
+    # Detect vertical coordinate: s_rho (legacy) or depth (standardized)
+    vert_dim = "s_rho" if "s_rho" in ds.dims else "depth"
+
+    u_raw = ds["u"].isel({_ROMS_TIME: time_idx, vert_dim: level_idx}).values
+    v_raw = ds["v"].isel({_ROMS_TIME: time_idx, vert_dim: level_idx}).values
 
     eta_rho, xi_rho = ds.sizes["eta_rho"], ds.sizes["xi_rho"]
 
@@ -297,7 +300,7 @@ def current_speed(
     (speed, lon, lat) : tuple of np.ndarray
         Current speed and the grid coordinates.
     """
-    if meta.source_name == "ROMS":
+    if meta.source_name in ("ROMS", "ROMS-Standard"):
         u_rho, v_rho, lon, lat = interpolate_uv_to_rho(ds, meta, time_idx, level_idx)
         speed = np.sqrt(u_rho**2 + v_rho**2)
         return speed, lon, lat
