@@ -200,6 +200,37 @@ class ParamPanel(QGroupBox):
         # cmap
         self._cmap_combo.setCurrentText("Spectral_r")
 
+        # Depth — pre-populate from config (refined after Plot loads real data)
+        self._prepopulate_depths(ds)
+
+    def _prepopulate_depths(self, ds: DatasetConfig) -> None:
+        """Pre-fill depth combo from config metadata before data loads."""
+        self._depth_combo.blockSignals(True)
+        self._depth_combo.clear()
+
+        if ds.vertical_type == "depth" and ds.vertical_layers > 0:
+            vrange = ds.vertical_range
+            if vrange and len(vrange) == 2:
+                d_min, d_max = vrange
+                depths = np.linspace(d_min, d_max, ds.vertical_layers)
+                for i, d in enumerate(depths):
+                    self._depth_combo.addItem(f"{float(d):.0f} m", i)
+                self._depth_combo.setCurrentIndex(0)
+            else:
+                for i in range(ds.vertical_layers):
+                    self._depth_combo.addItem(f"level {i}", i)
+        elif ds.vertical_type == "sigma" and ds.vertical_layers > 0:
+            n = ds.vertical_layers
+            for i in range(n):
+                label = f"s_rho[{i}] (surface)" if i == n - 1 else \
+                       f"s_rho[{i}] (bottom)" if i == 0 else f"s_rho[{i}]"
+                self._depth_combo.addItem(label, i)
+            self._depth_combo.setCurrentIndex(n - 1)  # surface
+        else:
+            self._depth_combo.addItem("(2-D only)", 0)
+
+        self._depth_combo.blockSignals(False)
+
     # ------------------------------------------------------------------
     # Value accessors
     # ------------------------------------------------------------------

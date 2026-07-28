@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
         cfg = self._current_ds_cfg
         canon = self._param_panel.variable
 
-        time_idx = self._resolve_time_index(ds, meta)
+        time_idx = self._resolve_time_index(ds, meta, self._param_panel.time_start_str)
         level_idx = self._param_panel.depth_index
 
         # Extract field
@@ -298,19 +298,29 @@ class MainWindow(QMainWindow):
         settings = QSettings("SCS_Data", "SCS_Marine_Tool")
         last_dir = settings.value("export/last_dir", "")
 
+        # Build depth options list from current param_panel state
+        depth_opts = []
+        for i in range(self._param_panel._depth_combo.count()):
+            label = self._param_panel._depth_combo.itemText(i)
+            idx = self._param_panel._depth_combo.itemData(i)
+            if idx is not None:
+                depth_opts.append((idx, label))
+
         dlg = ExportDialog(
             self,
             self._current_ds,
             self._current_meta,
             self._param_panel.variable,
-            self._resolve_time_index(self._current_ds, self._current_meta),
-            self._param_panel.depth_index,
+            self._resolve_time_index(self._current_ds, self._current_meta, self._param_panel.time_start_str),
+            self._resolve_time_index(self._current_ds, self._current_meta, self._param_panel.time_end_str),
+            depth_opts,
             north=self._param_panel.north,
             south=self._param_panel.south,
             east=self._param_panel.east,
             west=self._param_panel.west,
             auto_name=self._build_auto_name(),
             default_dir=last_dir,
+            target_resolution=self._param_panel.resolution,
         )
         if dlg.exec():  # Accepted = truthy
             settings.setValue("export/last_dir", dlg.save_dir)
@@ -333,14 +343,13 @@ class MainWindow(QMainWindow):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _resolve_time_index(self, ds: xr.Dataset, meta: SourceMeta) -> int:
-        """Find the time index closest to the selected start date."""
-        target = self._param_panel.time_start_str
+    def _resolve_time_index(self, ds: xr.Dataset, meta: SourceMeta, date_str: str) -> int:
+        """Find the time index closest to *date_str* (YYYY-MM-DD)."""
         time_dim = meta.time_dim
         if not time_dim or time_dim not in ds.coords:
             return 0
         t_vals = ds[time_dim].values
-        target_ns = pd.Timestamp(target).asm8.astype("datetime64[ns]").astype(np.int64)
+        target_ns = pd.Timestamp(date_str).asm8.astype("datetime64[ns]").astype(np.int64)
         t_ns = t_vals.astype("datetime64[ns]").astype(np.int64)
         return int(np.argmin(np.abs(t_ns - target_ns)))
 
