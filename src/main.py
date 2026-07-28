@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication, QStyleFactory
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPalette, QColor
+from PyQt6.QtGui import QPalette, QColor, QFont
 
 # Ensure both project root and src/ are on path
 SRC_DIR = Path(__file__).resolve().parent
@@ -44,6 +44,11 @@ def main() -> int:
     light.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
     light.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
     app.setPalette(light)
+
+    # Set a known-good default font (avoids DirectWrite warnings on Windows)
+    font = QFont("Segoe UI", 9)
+    font.setStyleHint(QFont.StyleHint.SansSerif)
+    app.setFont(font)
 
     window = MainWindow()
     window.show()

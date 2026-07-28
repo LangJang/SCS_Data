@@ -190,6 +190,135 @@ class MapCanvas(FigureCanvasQTAgg):
         self.draw_idle()
 
     # ------------------------------------------------------------------
+    # Overlay scatter (point data on top of map)
+    # ------------------------------------------------------------------
+
+    def add_overlay_scatter(self, df, clear_first: bool = True) -> None:
+        """Add scatter + pie overlay from a fishery DataFrame.
+
+        Single-record locations → scatter point (size ∝ catch_kg).
+        Multi-record locations → pie chart (Wedge patches, size ∝ total catch).
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Must have ``lon``, ``lat``, ``species``, ``catch_kg``.
+        clear_first : bool
+            Remove any previous overlay before drawing.
+        """
+        import matplotlib.patches as mpatches
+        from matplotlib.patches import Wedge
+
+        if clear_first:
+            self._clear_overlay()
+
+        if df is None or len(df) == 0:
+            return
+
+        species_list = sorted(df["species"].unique())
+        cmap = matplotlib.colormaps.get_cmap("tab10")
+        colors = {s: cmap(i % 10) for i, s in enumerate(species_list)}
+
+        # Base radius in degrees — scales with catch
+        grouped = df.groupby(["lat", "lon"])
+        max_total = grouped["catch_kg"].sum().max()
+        min_total = grouped["catch_kg"].sum().min()
+        base_radius = 0.02  # degrees (~2 km)
+
+        artists: list = []
+        for (lat, lon), group in grouped:
+            n_spp = len(group)
+            total_kg = group["catch_kg"].sum()
+            # Radius scales 0.02° → 0.12° based on total catch
+            if max_total > min_total:
+                frac = (total_kg - min_total) / (max_total - min_total + 1)
+            else:
+                frac = 0.5
+            radius = base_radius + 0.10 * frac
+
+            if n_spp == 1:
+                # ---- Single species: scatter point ----
+                row = group.iloc[0]
+                sp = row["species"]
+                size = 30 + 70 * frac
+                sc = self._ax.scatter(
+                    [lon], [lat],
+                    s=size,
+                    c=[colors[sp]],
+                    alpha=0.75, edgecolors="k", linewidth=0.3,
+                    transform=ccrs.PlateCarree(),
+                    zorder=10,
+                )
+                artists.append(sc)
+            else:
+                # ---- Multi-species: pie chart via Wedges ----
+                pie_sizes = group["catch_kg"].values.astype(float)
+                pie_colors = [colors[sp] for sp in group["species"]]
+                cumsum = np.cumsum(pie_sizes)
+                total = cumsum[-1]
+                angles = 2 * np.pi * cumsum / total
+                start_angle = 90  # top
+
+                for i in range(len(pie_sizes)):
+                    theta1 = start_angle - 360 * (cumsum[i - 1] / total if i > 0 else 0)
+                    theta2 = start_angle - 360 * (cumsum[i] / total)
+                    wedge = Wedge(
+                        (lon, lat),
+                        r=radius,
+                        theta1=theta2,
+                        theta2=theta1,
+                        facecolor=pie_colors[i],
+                        edgecolor="k",
+                        linewidth=0.2,
+                        alpha=0.85,
+                        transform=ccrs.PlateCarree(),
+                        zorder=10,
+                    )
+                    self._ax.add_patch(wedge)
+                    artists.append(wedge)
+
+        # Legend — proxy Patch handles
+        legend_handles = [
+            mpatches.Patch(color=colors[sp], label=sp)
+            for sp in species_list
+        ]
+        leg = self._fig.legend(
+            handles=legend_handles,
+            title="Species",
+            loc="center right",
+            fontsize=7,
+            title_fontsize=8,
+            markerscale=0.5,
+            framealpha=0.9,
+            ncols=1,
+            bbox_to_anchor=(-0.02, 0.5),
+        )
+        self._overlay_artists = artists
+        self._overlay_legend = leg
+        self._fig.subplots_adjust(left=0.18)
+        self.draw_idle()
+
+    def clear_overlay(self) -> None:
+        """Remove scatter overlay from the map."""
+        self._clear_overlay()
+        self.draw_idle()
+
+    def _clear_overlay(self) -> None:
+        """Internal: remove scatter artists, Wedge patches, and legend."""
+        if hasattr(self, "_overlay_artists"):
+            for artist in self._overlay_artists:
+                if isinstance(artist, list):
+                    for a in artist:
+                        a.remove()
+                else:
+                    artist.remove()
+            self._overlay_artists = []
+        if hasattr(self, "_overlay_legend") and self._overlay_legend is not None:
+            self._overlay_legend.remove()
+            self._overlay_legend = None
+            self._fig.subplots_adjust(left=0.125)  # reset margin
+
+    # ------------------------------------------------------------------
     # Navigation toolbar (for external embedding)
     # ------------------------------------------------------------------
 

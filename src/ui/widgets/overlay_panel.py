@@ -1,0 +1,271 @@
+"""
+Overlay data panel — searchable point-data list (mirrors SearchSection).
+
+Search bar  →  matching dataset cards  →  click to toggle overlay on map.
+
+Each overlay dataset is defined in a registry (label, csv_path, keywords).
+Search matches against label, keywords, species names, or methods
+(fetched from the CSV on first load).
+
+Signals
+-------
+overlay_toggled(df: pd.DataFrame | None, label: str)
+    Emitted when a card is clicked to activate / deactivate.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
+    QLineEdit, QPushButton, QScrollArea, QFrame, QSizePolicy,
+)
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont, QMouseEvent
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+OVERLAY_REGISTRY: list[dict] = [
+    {
+        "label": "Beibu Gulf Fishery",
+        "path": "data/beibu_fishery_sample.csv",
+        "keywords": ["fishery", "catch", "beibu", "fishing", "trawl",
+                      "gillnet", "longline", "purse seine", "beibu gulf"],
+    },
+    {
+        "label": "Northern SCS Fishery",
+        "path": "data/northern_scs_fishery.csv",
+        "keywords": ["fishery", "northern", "scs", "trawl", "handline",
+                      "mackerel", "snapper"],
+    },
+    {
+        "label": "Nansha (Spratly) Fishery",
+        "path": "data/nansha_fishery.csv",
+        "keywords": ["fishery", "nansha", "spratly", "southern",
+                      "barramundi", "snapper"],
+    },
+    {
+        "label": "Xisha (Paracel) Fishery",
+        "path": "data/xisha_fishery.csv",
+        "keywords": ["fishery", "xisha", "paracel", "central",
+                      "squid", "grouper"],
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# OverlayCard
+# ---------------------------------------------------------------------------
+
+class OverlayCard(QFrame):
+    """A clickable card that toggles overlay display on the map.
+
+    Visually matches InfoCard in SearchSection.  Selected state adds a
+    blue border + light-blue background.
+    """
+
+    toggled = pyqtSignal(object, bool)  # (entry_dict, selected)
+
+    STYLE_BASE = (
+        "OverlayCard { background: #ffffff; border: 1px solid #ccc; "
+        "border-radius: 4px; padding: 8px; } "
+        "OverlayCard:hover { border: 2px solid #2a82da; }"
+    )
+    STYLE_SELECTED = (
+        "OverlayCard { background: #e8f0fe; border: 2px solid #2a82da; "
+        "border-radius: 4px; padding: 8px; } "
+    )
+
+    def __init__(self, entry: dict, parent=None):
+        super().__init__(parent)
+        self._entry = entry
+        self._selected = False
+
+        self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
+        self.setStyleSheet(self.STYLE_BASE)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(280)
+        self.setMaximumWidth(320)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(2)
+
+        name = QLabel(entry["label"])
+        name_font = QFont()
+        name_font.setBold(True)
+        name.setFont(name_font)
+        layout.addWidget(name)
+
+        # Summary rows — same format as InfoCard
+        try:
+            df = pd.read_csv(entry["path"])
+            n = len(df)
+            sp = df["species"].nunique() if "species" in df.columns else "?"
+            mt = df["method"].nunique() if "method" in df.columns else "?"
+            t_min = df["date"].min() if "date" in df.columns else "?"
+            t_max = df["date"].max() if "date" in df.columns else "?"
+            layout.addWidget(QLabel(f"<b>Points:</b>  {n}"))
+            layout.addWidget(QLabel(f"<b>Species:</b>  {sp}  |  <b>Methods:</b>  {mt}"))
+            layout.addWidget(QLabel(f"<b>Date:</b>  {t_min} → {t_max}"))
+
+            # Tooltip
+            tooltip_lines = [f"<b>{entry['label']}</b>", f"Points: {n}"]
+            if "species" in df.columns:
+                top = df["species"].value_counts().head(7)
+                tooltip_lines.append("<br><b>Species:</b><br>" + "<br>".join(
+                    f"  &middot; {s} ({c})" for s, c in top.items()
+                ))
+            if "method" in df.columns:
+                top = df["method"].value_counts().head(5)
+                tooltip_lines.append("<br><b>Methods:</b><br>" + "<br>".join(
+                    f"  &middot; {m} ({c})" for m, c in top.items()
+                ))
+            if "catch_kg" in df.columns:
+                c = df["catch_kg"]
+                tooltip_lines.append(
+                    f"<br><b>Catch:</b> {c.min():.0f} ~ {c.max():.0f} kg"
+                )
+            self.setToolTip("<br>".join(tooltip_lines))
+        except Exception:
+            layout.addWidget(QLabel("(data file not available)"))
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        self._selected = not self._selected
+        self.setStyleSheet(self.STYLE_SELECTED if self._selected
+                           else self.STYLE_BASE)
+        self.toggled.emit(self._entry, self._selected)
+        super().mousePressEvent(event)
+
+    def deselect(self) -> None:
+        """Programmatically deselect this card."""
+        self._selected = False
+        self.setStyleSheet(self.STYLE_BASE)
+
+
+# ---------------------------------------------------------------------------
+# OverlayPanel
+# ---------------------------------------------------------------------------
+
+class OverlayPanel(QGroupBox):
+    """Search bar + clickable overlay cards (same pattern as SearchSection)."""
+
+    overlay_toggled = pyqtSignal(object, str)  # (DataFrame|None, label)
+
+    def __init__(self, parent=None):
+        super().__init__("Overlay Data", parent)
+        self._loaded: dict[str, pd.DataFrame] = {}
+        self._active_card: OverlayCard | None = None
+
+        layout = QVBoxLayout(self)
+
+        # ---- Search row ----
+        search_row = QHBoxLayout()
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText(
+            "Search — e.g. trawl, Nemipterus, Trawl ..."
+        )
+        self._search_input.setClearButtonEnabled(True)
+        self._search_input.returnPressed.connect(self._on_search)
+        search_row.addWidget(self._search_input, 1)
+        search_btn = QPushButton("Search")
+        search_btn.clicked.connect(self._on_search)
+        search_row.addWidget(search_btn)
+        layout.addLayout(search_row)
+
+        # ---- Cards area (scrollable) ----
+        self._cards_area = QScrollArea()
+        self._cards_area.setWidgetResizable(True)
+        self._cards_area.setStyleSheet("QScrollArea { border: none; }")
+        self._cards_widget = QWidget()
+        self._cards_layout = QHBoxLayout(self._cards_widget)
+        self._cards_layout.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        self._cards_layout.addStretch()
+        self._cards_area.setWidget(self._cards_widget)
+        layout.addWidget(self._cards_area)
+
+        # ---- Show all on init ----
+        self._on_search()
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    def _on_search(self) -> None:
+        query = self._search_input.text().strip().lower()
+
+        # Clear old cards
+        while self._cards_layout.count() > 1:
+            item = self._cards_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for entry in OVERLAY_REGISTRY:
+            matches = (query == "" or
+                       query in entry["label"].lower() or
+                       any(query in kw.lower()
+                           for kw in entry.get("keywords", [])))
+            # Also search inside the CSV
+            if not matches and query:
+                try:
+                    df = self._load(entry["path"])
+                    if df is not None:
+                        if ("species" in df.columns and
+                            df["species"].str.lower().str.contains(query).any()):
+                            matches = True
+                        elif ("method" in df.columns and
+                              df["method"].str.lower().str.contains(query).any()):
+                            matches = True
+                except Exception:
+                    pass
+
+            if matches:
+                card = OverlayCard(entry)
+                card.toggled.connect(self._on_card_toggled)
+                self._cards_layout.insertWidget(
+                    self._cards_layout.count() - 1, card
+                )
+
+    # ------------------------------------------------------------------
+    # Card toggle
+    # ------------------------------------------------------------------
+
+    def _on_card_toggled(self, entry: dict, selected: bool) -> None:
+        """A card was clicked — load data and emit."""
+        # Deselect previous active card
+        if self._active_card is not None and self._active_card is not self.sender():
+            self._active_card.deselect()
+
+        if selected:
+            card = self.sender()
+            if isinstance(card, OverlayCard):
+                self._active_card = card
+            df = self._load(entry["path"])
+            if df is not None:
+                self.overlay_toggled.emit(df, entry["label"])
+        else:
+            self._active_card = None
+            self.overlay_toggled.emit(None, "")
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _load(self, path: str) -> pd.DataFrame | None:
+        """Load CSV (cached)."""
+        if path in self._loaded:
+            return self._loaded[path]
+        try:
+            df = pd.read_csv(path)
+            self._loaded[path] = df
+            return df
+        except Exception:
+            return None

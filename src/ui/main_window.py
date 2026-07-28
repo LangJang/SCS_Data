@@ -35,6 +35,8 @@ from src.core.canonical import SourceMeta
 from src.core.roms_utils import extract_field
 from src.core.config_reader import AppConfig, DatasetConfig, load_config
 from src.ui.widgets.search_section import SearchSection
+from src.ui.widgets.overlay_panel import OverlayPanel
+from src.ui.widgets.filter_panel import FilterPanel
 from src.ui.widgets.param_section import ParamPanel, PreviewSection
 from src.ui.widgets.export_dialog import ExportDialog
 
@@ -52,6 +54,7 @@ class MainWindow(QMainWindow):
         self._current_ds: xr.Dataset | None = None
         self._current_meta: SourceMeta | None = None
         self._selected_bbox: tuple[float, float, float, float] | None = None
+        self._overlay_df = None
 
         self._init_ui()
         self._connect_signals()
@@ -71,22 +74,31 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(6)
 
-        # ---- Section 1: Find the Data ----
+        # ---- Section 1: Find the Data (left: gridded search | right: overlay) ----
+        find_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._search_section = SearchSection(self._config)
-        root.addWidget(self._search_section)
+        find_splitter.addWidget(self._search_section)
+        self._overlay_panel = OverlayPanel()
+        find_splitter.addWidget(self._overlay_panel)
+        find_splitter.setStretchFactor(0, 3)
+        find_splitter.setStretchFactor(1, 1)
+        root.addWidget(find_splitter)
 
-        # ---- Section 2: Make a Graph (left params | right preview) ----
+        # ---- Section 2: Make a Graph (params | preview | filters) ----
         graph_group = QGroupBox("Make a Graph")
         graph_layout = QHBoxLayout(graph_group)
 
         self._param_panel = ParamPanel(self._config)
         self._preview = PreviewSection()
+        self._filter_panel = FilterPanel()
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._param_panel)
         splitter.addWidget(self._preview)
+        splitter.addWidget(self._filter_panel)
         splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(1, 4)
+        splitter.setStretchFactor(2, 1)
 
         graph_layout.addWidget(splitter)
         root.addWidget(graph_group, 1)  # stretch = 1 (takes remaining space)
@@ -160,6 +172,8 @@ class MainWindow(QMainWindow):
         self._param_panel.params_changed.connect(self._on_params_changed)
         self._plot_btn.clicked.connect(self._on_plot)
         self._export_btn.clicked.connect(self._on_export)
+        self._overlay_panel.overlay_toggled.connect(self._on_overlay_toggled)
+        self._filter_panel.filter_changed.connect(self._on_filter_changed)
         self._preview.canvas.map_clicked.connect(self._on_map_clicked)
         self._preview.canvas.region_selected.connect(self._on_region_selected)
 
@@ -279,6 +293,9 @@ class MainWindow(QMainWindow):
         self._preview.update_preview(da, lon, lat, title=title, cmap=cmap, unit=unit,
                                       extent=extent)
 
+        # Re-apply overlay if active (update_map clears it)
+        self._reapply_overlay()
+
         self._status.showMessage(
             f"{cfg.name}  →  {canon}  "
             f"({self._param_panel.time_start_str})  "
@@ -324,6 +341,39 @@ class MainWindow(QMainWindow):
         )
         if dlg.exec():  # Accepted = truthy
             settings.setValue("export/last_dir", dlg.save_dir)
+
+    # ------------------------------------------------------------------
+    # Slots — overlay data
+    # ------------------------------------------------------------------
+
+    def _on_overlay_toggled(self, df, label: str) -> None:
+        """Add or remove scatter overlay from the preview map."""
+        if df is not None and len(df) > 0:
+            self._overlay_df = df
+            self._filter_panel.set_overlay(df, label)
+            self._preview.canvas.add_overlay_scatter(df)
+            self._status.showMessage(f"Overlay: {label}  ({len(df)} points)")
+        else:
+            self._overlay_df = None
+            self._filter_panel.set_overlay(None)
+            self._preview.canvas.clear_overlay()
+            self._status.showMessage("Overlay removed.")
+
+    def _on_filter_changed(self, df) -> None:
+        """Replace scatter overlay with filtered DataFrame."""
+        if df is not None and len(df) > 0:
+            self._preview.canvas.add_overlay_scatter(df, clear_first=True)
+            self._status.showMessage(
+                f"Filtered: {len(df)} points"
+            )
+        else:
+            self._preview.canvas.clear_overlay()
+
+    def _reapply_overlay(self) -> None:
+        """Re-apply the current overlay after a map redraw."""
+        if hasattr(self, "_overlay_df") and self._overlay_df is not None:
+            # Trigger FilterPanel to re-evaluate and emit filtered data
+            self._filter_panel._apply()
 
     # ------------------------------------------------------------------
     # Slots — map interaction
