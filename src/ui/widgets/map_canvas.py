@@ -285,13 +285,13 @@ class MapCanvas(FigureCanvasQTAgg):
         leg = self._fig.legend(
             handles=legend_handles,
             title="Species",
-            loc="center right",
-            fontsize=7,
-            title_fontsize=8,
-            markerscale=0.5,
+            loc="center left",
+            fontsize=8,
+            title_fontsize=9,
+            markerscale=0.8,
             framealpha=0.9,
             ncols=1,
-            bbox_to_anchor=(-0.02, 0.5),
+            bbox_to_anchor=(0.01, 0.5),
         )
         self._overlay_artists = artists
         self._overlay_legend = leg

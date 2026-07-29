@@ -10,7 +10,7 @@ datasets:
   # Standardized ROMS
   # ---------------------------------------------------------------------------
   - name: "ROMS Standardized (0–400 m, 0.05°)"
-    hidden: true
+    # hidden: true
     source: "ROMS-Standard"
     keywords:
       - temperature

@@ -161,7 +161,7 @@ class OverlayPanel(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("Overlay Data", parent)
         self._loaded: dict[str, pd.DataFrame] = {}
-        self._active_card: OverlayCard | None = None
+        self._active_cards: set[str] = set()  # paths of selected cards
 
         layout = QVBoxLayout(self)
 
@@ -239,20 +239,35 @@ class OverlayPanel(QGroupBox):
     # ------------------------------------------------------------------
 
     def _on_card_toggled(self, entry: dict, selected: bool) -> None:
-        """A card was clicked — load data and emit."""
-        # Deselect previous active card
-        if self._active_card is not None and self._active_card is not self.sender():
-            self._active_card.deselect()
+        """A card was clicked — add/remove from multi-selection, merge & emit."""
+        path = entry["path"]
 
         if selected:
-            card = self.sender()
-            if isinstance(card, OverlayCard):
-                self._active_card = card
-            df = self._load(entry["path"])
-            if df is not None:
-                self.overlay_toggled.emit(df, entry["label"])
+            self._active_cards.add(path)
         else:
-            self._active_card = None
+            self._active_cards.discard(path)
+
+        # Merge all active datasets
+        dfs = []
+        labels = []
+        for p in list(self._active_cards):
+            df = self._load(p)
+            if df is not None:
+                # Tag with source label
+                label = ""
+                for e in OVERLAY_REGISTRY:
+                    if e["path"] == p:
+                        label = e["label"]
+                        break
+                df = df.copy()
+                df["source"] = label
+                dfs.append(df)
+                labels.append(label)
+
+        if dfs:
+            merged = pd.concat(dfs, ignore_index=True)
+            self.overlay_toggled.emit(merged, ", ".join(labels))
+        else:
             self.overlay_toggled.emit(None, "")
 
     # ------------------------------------------------------------------

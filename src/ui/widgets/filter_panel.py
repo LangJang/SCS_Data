@@ -42,6 +42,7 @@ class FilterPanel(QGroupBox):
     def __init__(self, parent=None):
         super().__init__("Overlay Filters", parent)
         self._full_df: pd.DataFrame | None = None
+        self._active_df: pd.DataFrame | None = None
         self._overlay_label: str = ""
 
         layout = QVBoxLayout(self)
@@ -76,6 +77,7 @@ class FilterPanel(QGroupBox):
         layout.addLayout(logic_row)
 
         # Store checkboxes by group
+        self._source_cbs: list[QCheckBox] = []
         self._species_cbs: list[QCheckBox] = []
         self._method_cbs: list[QCheckBox] = []
         self._location_spins: dict[str, QDoubleSpinBox] = {}
@@ -86,6 +88,11 @@ class FilterPanel(QGroupBox):
     # Public API
     # ------------------------------------------------------------------
 
+    @property
+    def active_df(self) -> pd.DataFrame | None:
+        """Return the currently displayed (filtered) DataFrame, or None."""
+        return self._active_df
+
     def set_overlay(self, df: pd.DataFrame | None, label: str = "") -> None:
         """Populate filters from an overlay DataFrame.
 
@@ -94,6 +101,7 @@ class FilterPanel(QGroupBox):
         if df is None:
             self._full_df = None
             self._overlay_label = ""
+            self._active_df = None
             self.setVisible(False)
             return
 
@@ -110,8 +118,9 @@ class FilterPanel(QGroupBox):
 
     def _clear_filters(self) -> None:
         """Remove all filter widgets."""
-        for cb in self._species_cbs + self._method_cbs:
+        for cb in self._source_cbs + self._species_cbs + self._method_cbs:
             cb.deleteLater()
+        self._source_cbs.clear()
         self._species_cbs.clear()
         self._method_cbs.clear()
         for spin in self._location_spins.values():
@@ -126,6 +135,22 @@ class FilterPanel(QGroupBox):
 
     def _build_filters(self, df: pd.DataFrame) -> None:
         """Create filter groups based on available columns."""
+
+        # ---- Source (multi-dataset) ----
+        if "source" in df.columns and df["source"].nunique() > 1:
+            group = QGroupBox("Dataset")
+            gl = QVBoxLayout(group)
+            for src in sorted(df["source"].unique()):
+                cb = QCheckBox(str(src))
+                cb.setChecked(True)
+                cb.toggled.connect(self._apply)
+                gl.addWidget(cb)
+                self._source_cbs.append(cb)
+            self._filter_layout.insertWidget(
+                self._filter_layout.count() - 1, group
+            )
+        else:
+            self._source_cbs.clear()
 
         # ---- Species ----
         if "species" in df.columns:
@@ -231,6 +256,12 @@ class FilterPanel(QGroupBox):
         use_and = self._and_btn.isChecked()
         masks: list[pd.Series] = []
 
+        # Source filter (multi-dataset)
+        if self._source_cbs:
+            selected = {cb.text() for cb in self._source_cbs if cb.isChecked()}
+            if selected:
+                masks.append(df["source"].isin(selected))
+
         # Species filter
         if self._species_cbs:
             selected = {cb.text() for cb in self._species_cbs if cb.isChecked()}
@@ -264,6 +295,7 @@ class FilterPanel(QGroupBox):
 
         # Combine
         if not masks:
+            self._active_df = df
             self.filter_changed.emit(df)
             return
 
@@ -276,4 +308,5 @@ class FilterPanel(QGroupBox):
             for m in masks[1:]:
                 result = result | m
 
-        self.filter_changed.emit(df[result].copy())
+        self._active_df = df[result].copy()
+        self.filter_changed.emit(self._active_df)

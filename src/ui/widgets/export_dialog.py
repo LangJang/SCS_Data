@@ -58,6 +58,7 @@ class ExportDialog(QDialog):
         auto_name: str = "export",
         default_dir: str = "",
         target_resolution: float = 0.05,
+        overlay_df = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Export")
@@ -77,6 +78,7 @@ class ExportDialog(QDialog):
         self._auto_name = auto_name
         self._default_dir = default_dir or str(Path.home() / "Desktop")
         self._target_res = target_resolution
+        self._overlay_df = overlay_df
 
         # Compute native resolution from the dataset
         lon_name = meta.coord_map.get("longitude", "longitude")
@@ -301,9 +303,24 @@ class ExportDialog(QDialog):
                 boundary="trim",
             ).mean()
 
-        # -- 5. Write --
+        # -- 5. Add fishery overlay layers (NetCDF only) --
         subset = da.to_dataset()
 
+        if path.suffix == ".nc" and self._overlay_df is not None and len(self._overlay_df) > 0:
+            from src.core.fishery_raster import rasterize_fishery
+
+            lon_arr = subset[self._lon_name].values
+            lat_arr = subset[self._lat_name].values
+            fishery_layers = rasterize_fishery(self._overlay_df, lon_arr, lat_arr)
+
+            for layer_name, arr in fishery_layers.items():
+                subset[layer_name] = (
+                    [dim for dim in ["latitude", "longitude"]
+                     if dim in subset.dims],
+                    arr,
+                )
+
+        # -- 6. Write --
         if path.suffix == ".nc":
             to_netcdf(subset, path)
         else:

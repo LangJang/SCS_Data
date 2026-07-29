@@ -338,6 +338,7 @@ class MainWindow(QMainWindow):
             auto_name=self._build_auto_name(),
             default_dir=last_dir,
             target_resolution=self._param_panel.resolution,
+            overlay_df=self._filter_panel.active_df,
         )
         if dlg.exec():  # Accepted = truthy
             settings.setValue("export/last_dir", dlg.save_dir)
