@@ -37,6 +37,7 @@ from src.core.config_reader import AppConfig, DatasetConfig, load_config
 from src.ui.widgets.search_section import SearchSection
 from src.ui.widgets.overlay_panel import OverlayPanel
 from src.ui.widgets.filter_panel import FilterPanel
+from src.ui.widgets.station_panel import StationPanel
 from src.ui.widgets.param_section import ParamPanel, PreviewSection
 from src.ui.widgets.export_dialog import ExportDialog
 
@@ -78,7 +79,7 @@ class MainWindow(QMainWindow):
         find_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._search_section = SearchSection(self._config)
         find_splitter.addWidget(self._search_section)
-        self._overlay_panel = OverlayPanel()
+        self._overlay_panel = OverlayPanel(self._config.overlays)
         find_splitter.addWidget(self._overlay_panel)
         find_splitter.setStretchFactor(0, 3)
         find_splitter.setStretchFactor(1, 1)
@@ -91,11 +92,19 @@ class MainWindow(QMainWindow):
         self._param_panel = ParamPanel(self._config)
         self._preview = PreviewSection()
         self._filter_panel = FilterPanel()
+        self._station_panel = StationPanel()
+
+        # Right column: FilterPanel on top, StationPanel below
+        right_col = QSplitter(Qt.Orientation.Vertical)
+        right_col.addWidget(self._filter_panel)
+        right_col.addWidget(self._station_panel)
+        right_col.setStretchFactor(0, 1)
+        right_col.setStretchFactor(1, 0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._param_panel)
         splitter.addWidget(self._preview)
-        splitter.addWidget(self._filter_panel)
+        splitter.addWidget(right_col)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 4)
         splitter.setStretchFactor(2, 1)
@@ -107,7 +116,7 @@ class MainWindow(QMainWindow):
         action_group = QGroupBox("Plot & Export")
         action_layout = QHBoxLayout(action_group)
 
-        self._plot_btn = QPushButton("&Plot")
+        self._plot_btn = QPushButton("&Make a Graph")
         self._plot_btn.setShortcut(QKeySequence("Ctrl+G"))
         self._plot_btn.setToolTip("Generate the map with current settings (Ctrl+G)")
         self._plot_btn.setMinimumHeight(36)
@@ -141,7 +150,7 @@ class MainWindow(QMainWindow):
 
         file_menu = mb.addMenu("&File")
 
-        gen_action = QAction("&Plot", self)
+        gen_action = QAction("&Make a Graph", self)
         gen_action.setShortcut(QKeySequence("Ctrl+G"))
         gen_action.triggered.connect(self._on_plot)
         file_menu.addAction(gen_action)
@@ -281,8 +290,8 @@ class MainWindow(QMainWindow):
         # Compute padded extent for zoom
         west, east = self._param_panel.west, self._param_panel.east
         south, north = self._param_panel.south, self._param_panel.north
-        pad_lon = (east - west) * 0.15
-        pad_lat = (north - south) * 0.15
+        pad_lon = (east - west) * 0
+        pad_lat = (north - south) * 0
         extent = (west - pad_lon, east + pad_lon, south - pad_lat, north + pad_lat)
 
         # Render
@@ -347,18 +356,41 @@ class MainWindow(QMainWindow):
     # Slots — overlay data
     # ------------------------------------------------------------------
 
-    def _on_overlay_toggled(self, df, label: str) -> None:
-        """Add or remove scatter overlay from the preview map."""
-        if df is not None and len(df) > 0:
+    def _on_overlay_toggled(self, payload: dict) -> None:
+        """Handle overlay toggle — dispatches fishery + station independently."""
+        fishery = payload.get("fishery")
+        station = payload.get("station")
+
+        # ---- Fishery ----
+        if fishery and fishery.get("df") is not None and len(fishery["df"]) > 0:
+            df = fishery["df"]
+            label = fishery.get("label", "")
             self._overlay_df = df
             self._filter_panel.set_overlay(df, label)
             self._preview.canvas.add_overlay_scatter(df)
-            self._status.showMessage(f"Overlay: {label}  ({len(df)} points)")
+            self._status.showMessage(f"Fishery: {label}  ({len(df)} points)")
         else:
             self._overlay_df = None
             self._filter_panel.set_overlay(None)
             self._preview.canvas.clear_overlay()
-            self._status.showMessage("Overlay removed.")
+
+        # ---- Station ----
+        if station and station.get("df") is not None:
+            entry = station.get("entry", {})
+            df = station["df"]
+            label = station.get("label", "")
+            self._station_panel.set_station(entry, df)
+            lat = entry.get("station_lat", 0)
+            lon = entry.get("station_lon", 0)
+            self._preview.canvas.add_station_marker(lat, lon, label)
+            self._status.showMessage(
+                f"Station: {label}  +  "
+                + self._status.currentMessage().split("+")[-1].strip()
+                if "Fishery" in (self._status.currentMessage() or "")
+                else f"Station: {label}"
+            )
+        else:
+            self._station_panel.clear()
 
     def _on_filter_changed(self, df) -> None:
         """Replace scatter overlay with filtered DataFrame."""

@@ -209,16 +209,18 @@ class ParamPanel(QGroupBox):
         self._depth_combo.clear()
 
         if ds.vertical_type == "depth" and ds.vertical_layers > 0:
-            vrange = ds.vertical_range
-            if vrange and len(vrange) == 2:
-                d_min, d_max = vrange
+            if ds.depth_values:
+                for i, d in enumerate(ds.depth_values):
+                    self._depth_combo.addItem(f"{float(d):.0f} m", i)
+            elif ds.vertical_range and len(ds.vertical_range) == 2:
+                d_min, d_max = ds.vertical_range
                 depths = np.linspace(d_min, d_max, ds.vertical_layers)
                 for i, d in enumerate(depths):
                     self._depth_combo.addItem(f"{float(d):.0f} m", i)
-                self._depth_combo.setCurrentIndex(0)
             else:
                 for i in range(ds.vertical_layers):
                     self._depth_combo.addItem(f"level {i}", i)
+            self._depth_combo.setCurrentIndex(0)
         elif ds.vertical_type == "sigma" and ds.vertical_layers > 0:
             n = ds.vertical_layers
             for i in range(n):

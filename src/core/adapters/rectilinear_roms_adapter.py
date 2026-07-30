@@ -36,7 +36,7 @@ class RectilinearROMSAdapter(DataSourceAdapter):
 
     @property
     def source_name(self) -> str:
-        return "ROMS-Rectilinear"
+        return "SCSIO-Rectilinear"
 
     # ------------------------------------------------------------------
     # Detection

@@ -94,7 +94,7 @@ class MapCanvas(FigureCanvasQTAgg):
                   "boxstyle": "round,pad=0.6", "alpha": 0.85},
         )
 
-        self._fig.tight_layout()
+        self._fig.tight_layout(pad=0.3, rect=(0, 0, 1, 0.93))
 
         super().__init__(self._fig)
         self.setParent(parent)
@@ -170,11 +170,12 @@ class MapCanvas(FigureCanvasQTAgg):
             rasterized=True,
         )
 
-        # ---- Colorbar ----
-        cb_kw = {"shrink": 0.75}
+        # ---- Colorbar (compact) ----
+        cb_kw = {"shrink": 0.6, "aspect": 30, "pad": 0.02}
         if unit:
             cb_kw["label"] = unit
-        self._fig.colorbar(mesh, ax=self._ax, **cb_kw)
+        cbar = self._fig.colorbar(mesh, ax=self._ax, **cb_kw)
+        cbar.ax.tick_params(labelsize=7)
 
         # ---- Title ----
         self._ax.set_title(title, fontsize=13)
@@ -186,7 +187,7 @@ class MapCanvas(FigureCanvasQTAgg):
         # Re-attach rectangle selector (new axes = new selector)
         self._connect_rectangle_selector()
 
-        self._fig.tight_layout()
+        self._fig.tight_layout(pad=0.3, rect=(0, 0.03, 1, 1))
         self.draw_idle()
 
     # ------------------------------------------------------------------
@@ -295,7 +296,8 @@ class MapCanvas(FigureCanvasQTAgg):
         )
         self._overlay_artists = artists
         self._overlay_legend = leg
-        self._fig.subplots_adjust(left=0.18)
+        self._fig.tight_layout(pad=0.3, rect=(0, 0, 1, 0.93))
+        self._fig.subplots_adjust(left=0.17)
         self.draw_idle()
 
     def clear_overlay(self) -> None:
@@ -316,7 +318,31 @@ class MapCanvas(FigureCanvasQTAgg):
         if hasattr(self, "_overlay_legend") and self._overlay_legend is not None:
             self._overlay_legend.remove()
             self._overlay_legend = None
-            self._fig.subplots_adjust(left=0.125)  # reset margin
+            self._fig.tight_layout(pad=0.3, rect=(0, 0, 1, 0.93))
+
+    # ------------------------------------------------------------------
+    # Station marker
+    # ------------------------------------------------------------------
+
+    def add_station_marker(self, lat: float, lon: float, label: str) -> None:
+        """Place a fixed marker (star) at a survey station location."""
+        self._ax.plot(
+            lon, lat,
+            marker="*", markersize=16,
+            color="red", markeredgecolor="darkred",
+            markeredgewidth=0.5,
+            transform=ccrs.PlateCarree(),
+            zorder=15,
+        )
+        self._ax.annotate(
+            label, (lon, lat),
+            xytext=(8, 8), textcoords="offset points",
+            fontsize=9, fontweight="bold", color="darkred",
+            bbox={"facecolor": "white", "edgecolor": "darkred",
+                  "boxstyle": "round,pad=0.3", "alpha": 0.85},
+            zorder=16,
+        )
+        self.draw_idle()
 
     # ------------------------------------------------------------------
     # Navigation toolbar (for external embedding)

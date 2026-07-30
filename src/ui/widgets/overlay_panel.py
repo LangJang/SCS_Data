@@ -28,38 +28,6 @@ from PyQt6.QtGui import QFont, QMouseEvent
 
 
 # ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
-
-OVERLAY_REGISTRY: list[dict] = [
-    {
-        "label": "Beibu Gulf Fishery",
-        "path": "data/beibu_fishery_sample.csv",
-        "keywords": ["fishery", "catch", "beibu", "fishing", "trawl",
-                      "gillnet", "longline", "purse seine", "beibu gulf"],
-    },
-    {
-        "label": "Northern SCS Fishery",
-        "path": "data/northern_scs_fishery.csv",
-        "keywords": ["fishery", "northern", "scs", "trawl", "handline",
-                      "mackerel", "snapper"],
-    },
-    {
-        "label": "Nansha (Spratly) Fishery",
-        "path": "data/nansha_fishery.csv",
-        "keywords": ["fishery", "nansha", "spratly", "southern",
-                      "barramundi", "snapper"],
-    },
-    {
-        "label": "Xisha (Paracel) Fishery",
-        "path": "data/xisha_fishery.csv",
-        "keywords": ["fishery", "xisha", "paracel", "central",
-                      "squid", "grouper"],
-    },
-]
-
-
-# ---------------------------------------------------------------------------
 # OverlayCard
 # ---------------------------------------------------------------------------
 
@@ -134,7 +102,10 @@ class OverlayCard(QFrame):
                 )
             self.setToolTip("<br>".join(tooltip_lines))
         except Exception:
-            layout.addWidget(QLabel("(data file not available)"))
+            fallback = entry.get("summary", "(data file not available)")
+            lbl = QLabel(fallback)
+            lbl.setWordWrap(True)
+            layout.addWidget(lbl)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self._selected = not self._selected
@@ -156,10 +127,11 @@ class OverlayCard(QFrame):
 class OverlayPanel(QGroupBox):
     """Search bar + clickable overlay cards (same pattern as SearchSection)."""
 
-    overlay_toggled = pyqtSignal(object, str)  # (DataFrame|None, label)
+    overlay_toggled = pyqtSignal(object)  # dict with keys: df, label, type, entry
 
-    def __init__(self, parent=None):
+    def __init__(self, overlays: list[dict] | None = None, parent=None):
         super().__init__("Overlay Data", parent)
+        self._registry: list[dict] = overlays or []
         self._loaded: dict[str, pd.DataFrame] = {}
         self._active_cards: set[str] = set()  # paths of selected cards
 
@@ -208,7 +180,7 @@ class OverlayPanel(QGroupBox):
             if item.widget():
                 item.widget().deleteLater()
 
-        for entry in OVERLAY_REGISTRY:
+        for entry in self._registry:
             matches = (query == "" or
                        query in entry["label"].lower() or
                        any(query in kw.lower()
@@ -241,45 +213,74 @@ class OverlayPanel(QGroupBox):
     def _on_card_toggled(self, entry: dict, selected: bool) -> None:
         """A card was clicked — add/remove from multi-selection, merge & emit."""
         path = entry["path"]
+        etype = entry.get("type", "fishery")
 
         if selected:
             self._active_cards.add(path)
         else:
             self._active_cards.discard(path)
 
-        # Merge all active datasets
-        dfs = []
-        labels = []
-        for p in list(self._active_cards):
-            df = self._load(p)
-            if df is not None:
-                # Tag with source label
-                label = ""
-                for e in OVERLAY_REGISTRY:
-                    if e["path"] == p:
-                        label = e["label"]
-                        break
-                df = df.copy()
-                df["source"] = label
-                dfs.append(df)
-                labels.append(label)
+        # Only handle fishery-type cards for merged scatter
+        fishery_entries = [
+            e for e in self._registry
+            if e["path"] in self._active_cards and e.get("type", "fishery") == "fishery"
+        ]
+        station_entries = [
+            e for e in self._registry
+            if e["path"] in self._active_cards and e.get("type", "") == "station"
+        ]
 
-        if dfs:
-            merged = pd.concat(dfs, ignore_index=True)
-            self.overlay_toggled.emit(merged, ", ".join(labels))
-        else:
-            self.overlay_toggled.emit(None, "")
+        # Build fishery payload
+        fishery_payload = None
+        if fishery_entries:
+            dfs, labels = [], []
+            for fe in fishery_entries:
+                df = self._load(fe["path"])
+                if df is not None:
+                    df = df.copy()
+                    df["source"] = fe["label"]
+                    dfs.append(df)
+                    labels.append(fe["label"])
+            if dfs:
+                merged = pd.concat(dfs, ignore_index=True)
+                fishery_payload = {
+                    "type": "fishery",
+                    "label": ", ".join(labels),
+                    "entry": fishery_entries[0],
+                    "df": merged,
+                }
+
+        # Build station payload
+        station_payload = None
+        if station_entries:
+            sentry = station_entries[-1]
+            sdf = self._load(sentry["path"])
+            station_payload = {
+                "type": "station",
+                "label": sentry["label"],
+                "entry": sentry,
+                "df": sdf,
+            }
+
+        # Emit combined
+        self.overlay_toggled.emit({
+            "fishery": fishery_payload,
+            "station": station_payload,
+        })
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _load(self, path: str) -> pd.DataFrame | None:
-        """Load CSV (cached)."""
+        """Load CSV or Excel (cached)."""
         if path in self._loaded:
             return self._loaded[path]
         try:
-            df = pd.read_csv(path)
+            if path.endswith(".xlsx") or path.endswith(".xls"):
+                df = pd.read_excel(path, sheet_name=0)
+            else:
+                df = pd.read_csv(path)
             self._loaded[path] = df
             return df
         except Exception:

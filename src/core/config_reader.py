@@ -25,7 +25,7 @@ class DatasetConfig:
         "default_resolution", "available_resolutions",
         "lon_min", "lon_max", "lat_min", "lat_max",
         "time_start", "time_end", "time_frequency",
-        "vertical_type", "vertical_layers", "vertical_range",
+        "vertical_type", "vertical_layers", "vertical_range", "depth_values",
         "path", "file_pattern",
     )
 
@@ -54,6 +54,7 @@ class DatasetConfig:
         self.vertical_type: str = vert.get("type", "")
         self.vertical_layers: int = vert.get("layers", 0)
         self.vertical_range: list[float] = vert.get("range", [])
+        self.depth_values: list[float] = vert.get("depth_values", [])
 
         self.path: str = raw.get("path", "")
         self.file_pattern: str = raw.get("file_pattern", "")
@@ -70,6 +71,10 @@ class DatasetConfig:
         vert_str = self.vertical_type
         if self.vertical_range:
             vert_str += f" [{self.vertical_range[0]:.0f}–{self.vertical_range[1]:.0f} m]"
+        elif self.depth_values:
+            vert_str += f" [{self.depth_values[0]:.0f}-{self.depth_values[-1]:.0f}] m"
+        elif self.depth_values:
+            vert_str += f" [{self.depth_values[0]:.0f}-{self.depth_values[-1]:.0f}] m"
         elif self.vertical_layers:
             vert_str += f" ({self.vertical_layers} layers)"
         return {
@@ -114,6 +119,8 @@ class AppConfig:
             PresetRegion(r) for r in raw.get("preset_regions", [])
         ]
         self.color_styles: list[str] = raw.get("color_styles", ["viridis"])
+
+        self.overlays: list[dict] = raw.get("overlays", [])
 
     # ------------------------------------------------------------------
     # Search

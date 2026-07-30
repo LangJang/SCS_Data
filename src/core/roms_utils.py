@@ -114,7 +114,7 @@ def _resolve_coords(
     ROMS uses staggered grids: u/ubar are on lon_u/lat_u, v/vbar on lon_v/lat_v.
     All other variables use lon_rho/lat_rho.
     """
-    if meta.source_name in ("ROMS", "ROMS-Standard"):
+    if meta.source_name in ("ROMS", "ROMS-Standard", "SCSIO", "SCSIO-Standard"):
         return _resolve_roms_coords(ds, src_var)
     else:
         # Generic: use canonical lon/lat
@@ -236,9 +236,9 @@ def interpolate_uv_to_rho(
     KeyError
         If ``"u"`` or ``"v"`` is missing.
     """
-    if meta.source_name not in ("ROMS", "ROMS-Standard"):
+    if meta.source_name not in ("ROMS", "ROMS-Standard", "SCSIO", "SCSIO-Standard"):
         raise ValueError(
-            f"Staggered-grid interpolation is ROMS-specific. "
+            f"Staggered-grid interpolation is ROMS/SCSIO-specific. "
             f"Current source: {meta.source_name}. "
             f"For CMEMS, uo/vo are already on a common grid — "
             f"extract them directly with extract_field()."
@@ -300,7 +300,7 @@ def current_speed(
     (speed, lon, lat) : tuple of np.ndarray
         Current speed and the grid coordinates.
     """
-    if meta.source_name in ("ROMS", "ROMS-Standard"):
+    if meta.source_name in ("ROMS", "ROMS-Standard", "SCSIO", "SCSIO-Standard"):
         u_rho, v_rho, lon, lat = interpolate_uv_to_rho(ds, meta, time_idx, level_idx)
         speed = np.sqrt(u_rho**2 + v_rho**2)
         return speed, lon, lat

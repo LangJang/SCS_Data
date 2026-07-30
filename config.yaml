@@ -9,15 +9,15 @@ datasets:
   # ---------------------------------------------------------------------------
   # Standardized ROMS
   # ---------------------------------------------------------------------------
-  - name: "ROMS Standardized (0–400 m, 0.05°)"
+  - name: "SCSIO Standardized (0–400 m, 0.05°)"
     # hidden: true
-    source: "ROMS-Standard"
+    source: "SCSIO-Standard"
     keywords:
       - temperature
       - salinity
       - current
       - velocity
-      - roms
+      - scsio
       - standardized
       - depth-level
     variables:
@@ -39,17 +39,17 @@ datasets:
     vertical:
       type: depth
       layers: 14
-      range: [0, 400]
+      depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
     path: "D:/ChatWithAI/Downloading_CEMES/output/roms/"
     file_pattern: "roms_avg_*.nc"
 
-  - name: "ROMS Rectilinear (0–400 m, 0.05°)"
-    source: "ROMS-Rectilinear"
+  - name: "SCSIO Rectilinear (0–400 m, 0.05°)"
+    source: "SCSIO-Rectilinear"
     keywords:
       - temperature
       - salinity
       - current
-      - roms
+      - scsio
       - rectilinear
       - regridded
       - standardized
@@ -72,7 +72,7 @@ datasets:
     vertical:
       type: depth
       layers: 14
-      range: [0, 400]
+      depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
     path: "D:/ChatWithAI/Downloading_CEMES/output/roms/"
     file_pattern: "roms_rectilinear_005deg.nc"
 
@@ -104,7 +104,7 @@ datasets:
     vertical:
       type: depth
       layers: 14
-      range: [0, 400]
+      depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
     path: "D:/ChatWithAI/Downloading_CEMES/output/"
     file_pattern: "SCS_cmems_do_chl.nc"
 
@@ -135,7 +135,7 @@ datasets:
     vertical:
       type: depth
       layers: 14
-      range: [0, 400]
+      depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
     path: "D:/ChatWithAI/Downloading_CEMES/output/"
     file_pattern: "SCS_cmems_no3_po4_si.nc"
 
@@ -162,7 +162,7 @@ datasets:
     vertical:
       type: depth
       layers: 14
-      range: [0, 400]
+      depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
     path: "D:/ChatWithAI/Downloading_CEMES/output/"
     file_pattern: "SCS_cmems_ph.nc"
 
@@ -171,18 +171,18 @@ datasets:
   # ===========================================================================
 
   # ---------------------------------------------------------------------------
-  # ROMS (original sigma-coordinate)
+  # SCSIO (original sigma-coordinate)
   # ---------------------------------------------------------------------------
-  - name: "ROMS SCS Daily Average (raw sigma)"
+  - name: "SCSIO SCS Daily Average (raw sigma)"
     hidden: true
-    source: "ROMS"
+    source: "SCSIO"
     keywords:
       - temperature
       - salinity
       - current
       - velocity
       - sea surface height
-      - roms
+      - scsio
       - daily
     variables:
       - temperature
@@ -303,11 +303,16 @@ datasets:
 # Preset regions for quick spatial selection
 # ---------------------------------------------------------------------------
 preset_regions:
-  - name: "South China Sea (Full)"
+  - name: "Original range"
     north: 30.0
     south: -0.5
     east: 134.5
     west: 90.0
+  - name: "South China Sea"
+    north: 25.0
+    south: -0.5
+    east: 122.0
+    west: 99.0
   - name: "Northern SCS"
     north: 25.0
     south: 16.0
@@ -342,3 +347,42 @@ color_styles:
   - coolwarm
   - Greens
   - Blues
+
+# ---------------------------------------------------------------------------
+# Overlay datasets — point / station data for map overlay
+# ---------------------------------------------------------------------------
+overlays:
+  # ---- Fishery (point scatter / pie) ----
+  - label: "Beibu Gulf Fishery"
+    path: "data/beibu_fishery_sample.csv"
+    type: fishery
+    summary: "86 stations in Beibu Gulf (17.5-21.5°N, 105.5-109.5°E). 7 species, 5 gear types. Catch range: 10-8,000 kg."
+    keywords: [fishery, catch, beibu, fishing, trawl, gillnet, longline, purse seine, beibu gulf]
+
+  - label: "Northern SCS Fishery"
+    path: "data/northern_scs_fishery.csv"
+    type: fishery
+    summary: "95 stations in northern SCS (18-22°N, 110-118°E). 7 species, multi-gear. Catch range: 10-8,000 kg."
+    keywords: [fishery, northern, scs, trawl, handline, mackerel, snapper]
+
+  - label: "Nansha (Spratly) Fishery"
+    path: "data/nansha_fishery.csv"
+    type: fishery
+    summary: "65 stations in Nansha area (3-12°N, 108-118°E). 7 species, multi-gear. Catch range: 10-8,000 kg."
+    keywords: [fishery, nansha, spratly, southern, barramundi, snapper]
+
+  - label: "Xisha (Paracel) Fishery"
+    path: "data/xisha_fishery.csv"
+    type: fishery
+    summary: "45 stations near Xisha (15-18°N, 110-113°E). 6 species, multi-gear. Catch range: 10-8,000 kg."
+    keywords: [fishery, xisha, paracel, central, squid, grouper]
+
+  # ---- Biological survey (station point + detail panel) ----
+  - label: "Tuna Survey (SCS-01)"
+    path: "D:/ChatWithAI/SCS_data/data/tuna_202606.xlsx"
+    type: station
+    station_lat: 11.2
+    station_lon: 114.0
+    station_name: "SCS-01"
+    summary: "SCS-01 (11.2°N, 114.0°E). 10 Thunnus albacares specimens. Morphometric measurements: body length, total length, weight, sex."
+    keywords: [tuna, biological, survey, morphometric, station, thunnus]

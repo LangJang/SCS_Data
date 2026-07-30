@@ -62,7 +62,7 @@ class ROMSAdapter(DataSourceAdapter):
 
     @property
     def source_name(self) -> str:
-        return "ROMS"
+        return "SCSIO"
 
     # ------------------------------------------------------------------
     # Detection
