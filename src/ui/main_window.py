@@ -34,12 +34,14 @@ import xarray as xr
 from src.core.canonical import SourceMeta
 from src.core.roms_utils import extract_field
 from src.core.config_reader import AppConfig, DatasetConfig, load_config
+from src.core.time_assembler import TimeAssembler
 from src.ui.widgets.search_section import SearchSection
 from src.ui.widgets.overlay_panel import OverlayPanel
 from src.ui.widgets.filter_panel import FilterPanel
 from src.ui.widgets.station_panel import StationPanel
 from src.ui.widgets.param_section import ParamPanel, PreviewSection
 from src.ui.widgets.export_dialog import ExportDialog
+from src.ui.widgets.import_data_dialog import ImportDataDialog
 
 
 class MainWindow(QMainWindow):
@@ -162,6 +164,13 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        import_action = QAction("&Import New Data...", self)
+        import_action.setShortcut(QKeySequence("Ctrl+I"))
+        import_action.triggered.connect(self._on_import)
+        file_menu.addAction(import_action)
+
+        file_menu.addSeparator()
+
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut(QKeySequence("Ctrl+Q"))
         exit_action.triggered.connect(self.close)
@@ -229,36 +238,90 @@ class MainWindow(QMainWindow):
         """Load data, then refresh preview."""
         cfg = self._current_ds_cfg
 
-        # Load the NetCDF file (only if not already loaded for this dataset)
+        # Load the data (only if not already loaded for this dataset)
         if self._current_ds is None:
             try:
-                data_path = cfg.resolve_path(Path("."))
-                nc_files = sorted(data_path.glob(cfg.file_pattern))
-                if not nc_files:
-                    raise FileNotFoundError(
-                        f"No files matching '{cfg.file_pattern}' in {data_path}"
-                    )
-                self._current_ds = xr.open_dataset(nc_files[0], engine="netcdf4")
+                self._current_ds, self._current_meta = self._load_dataset(cfg)
             except Exception as e:
                 self._status.showMessage(f"Load error: {e}")
                 self._plot_btn.setEnabled(True)
                 return
-
-            # Detect source and build meta
-            from src.core.adapters import detect_source
-            adapter_cls = detect_source(self._current_ds, str(nc_files[0]))
-            if adapter_cls is None:
-                self._status.showMessage("Could not detect data source.")
-                self._plot_btn.setEnabled(True)
-                return
-            adapter = adapter_cls()
-            self._current_meta = adapter.adapt(self._current_ds)
 
             # Populate depth levels from loaded data
             self._param_panel.set_depth_levels(self._current_ds, self._current_meta)
 
         self._refresh_preview()
         self._plot_btn.setEnabled(True)
+
+    def _load_dataset(self, cfg: DatasetConfig) -> tuple[xr.Dataset, SourceMeta]:
+        """Load a dataset according to its read template (file_layout/time_axis).
+
+        Returns ``(dataset, meta)`` where *meta* describes the canonical
+        variables/coords.  The preview always samples one timestep; the full
+        time axis is carried by the returned dataset for export.
+        """
+        from src.core.adapters import detect_source
+
+        data_path = cfg.resolve_path(Path("."))
+        nc_files = sorted(data_path.glob(cfg.file_pattern))
+        if not nc_files:
+            raise FileNotFoundError(
+                f"No files matching '{cfg.file_pattern}' in {data_path}"
+            )
+
+        if cfg.file_layout == "directory" and cfg.time_axis == "per_file":
+            if not cfg.date_pattern:
+                raise ValueError(
+                    f"Dataset '{cfg.name}' is per_file but has no date_pattern."
+                )
+            assembler = TimeAssembler(data_path)
+            assembler.scan(
+                pattern=cfg.file_pattern,
+                date_pattern=cfg.date_pattern,
+                on_unmatched="error",
+            )
+            ds = assembler.assemble()
+            meta = assembler.assembled_meta.base_meta
+            return ds, meta
+
+        if cfg.file_layout == "directory" and cfg.time_axis == "internal":
+            first = xr.open_dataset(nc_files[0], engine="netcdf4")
+            try:
+                adapter_cls = detect_source(first, str(nc_files[0]))
+                if adapter_cls is None:
+                    raise RuntimeError("Could not detect data source.")
+                meta = adapter_cls().adapt(first)
+                time_dim = meta.time_dim
+            finally:
+                first.close()
+            if not time_dim:
+                raise ValueError(
+                    f"Dataset '{cfg.name}' files have no time dimension "
+                    f"to concatenate along."
+                )
+            ds = xr.open_mfdataset(
+                [str(p) for p in nc_files],
+                concat_dim=time_dim,
+                combine="nested",
+                engine="netcdf4",
+                compat="override",
+                data_vars="minimal",
+                coords="minimal",
+            )
+            return ds, meta
+
+        # single file (single-snapshot or single-file-multi-day); also the
+        # degenerate fallback for directory+none (open the first file only).
+        ds = xr.open_dataset(nc_files[0], engine="netcdf4")
+        try:
+            adapter_cls = detect_source(ds, str(nc_files[0]))
+            if adapter_cls is None:
+                raise RuntimeError("Could not detect data source.")
+            meta = adapter_cls().adapt(ds)
+        except Exception:
+            ds.close()
+            raise
+        return ds, meta
 
     def _refresh_preview(self) -> None:
         """Re-extract field with current params and update the preview map."""
@@ -348,9 +411,36 @@ class MainWindow(QMainWindow):
             default_dir=last_dir,
             target_resolution=self._param_panel.resolution,
             overlay_df=self._filter_panel.active_df,
+            time_labels=self._time_labels(),
         )
         if dlg.exec():  # Accepted = truthy
             settings.setValue("export/last_dir", dlg.save_dir)
+
+    # ------------------------------------------------------------------
+    # Slots — Import new data
+    # ------------------------------------------------------------------
+
+    def _on_import(self) -> None:
+        """Open the import dialog; reload the catalog if data was registered."""
+        dlg = ImportDataDialog(self)
+        if dlg.exec():
+            self._reload_registry()
+
+    def _reload_registry(self) -> None:
+        """Reload the dataset/overlay catalog after an import."""
+        self._config = load_config()
+        self._search_section.reload(self._config)
+        self._overlay_panel.reload(self._config.overlays)
+
+        # Invalidate any cached dataset so a re-imported name re-reads from disk.
+        self._current_ds_cfg = None
+        self._current_ds = None
+        self._current_meta = None
+        self._overlay_df = None
+        self._preview.canvas.clear_overlay()
+        self._plot_btn.setEnabled(False)
+        self._export_btn.setEnabled(False)
+        self._status.showMessage("Data catalog reloaded.")
 
     # ------------------------------------------------------------------
     # Slots — overlay data
@@ -435,6 +525,21 @@ class MainWindow(QMainWindow):
         target_ns = pd.Timestamp(date_str).asm8.astype("datetime64[ns]").astype(np.int64)
         t_ns = t_vals.astype("datetime64[ns]").astype(np.int64)
         return int(np.argmin(np.abs(t_ns - target_ns)))
+
+    def _time_labels(self) -> list[str]:
+        """Return ``YYYY-MM-DD`` labels for the loaded dataset's time axis.
+
+        Empty when the dataset has no time dimension.  For multi-file data the
+        labels are taken from the assembled dataset's time coordinate (the same
+        source the export slice uses), not from filename-derived dates.
+        """
+        if self._current_ds is None or self._current_meta is None:
+            return []
+        time_dim = self._current_meta.time_dim
+        if not time_dim or time_dim not in self._current_ds.coords:
+            return []
+        values = self._current_ds[time_dim].values
+        return [pd.Timestamp(t).strftime("%Y-%m-%d") for t in values]
 
     def _build_auto_name(self) -> str:
         """Build auto filename: Variable_StartDate_EndDate_Depth."""

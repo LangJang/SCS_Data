@@ -33,6 +33,9 @@ SCS_DATA_DIR = Path("D:/ChatWithAI/SCS_data")
 CMEMS_OUTPUT_DIR = CMEMS_DIR / "output"
 CMEMS_STD_ROMS_DIR = CMEMS_OUTPUT_DIR / "roms"
 
+# SQLite metadata registry (datasets + overlays), git-ignored
+REGISTRY_DB = SCS_DATA_DIR / "registry.db"
+
 # ---------------------------------------------------------------------------
 # Placeholder map for config.yaml.
 #

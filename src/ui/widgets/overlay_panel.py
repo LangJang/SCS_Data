@@ -285,3 +285,10 @@ class OverlayPanel(QGroupBox):
             return df
         except Exception:
             return None
+
+    def reload(self, overlays: list[dict]) -> None:
+        """Refresh after the catalog changes (e.g. a new overlay was imported)."""
+        self._registry = overlays or []
+        self._loaded.clear()
+        self._active_cards.clear()
+        self._on_search()

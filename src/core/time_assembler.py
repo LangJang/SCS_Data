@@ -28,6 +28,7 @@ Typical usage::
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime
@@ -68,6 +69,77 @@ def derive_date_from_roms_filename(filepath: str | Path) -> pd.Timestamp | None:
     return pd.Timestamp(f"{date_str}T{hour_str}:00:00")
 
 
+# Map strptime directives to regex fragments.  ``datetime.strptime`` parses
+# a *prefix* and silently ignores trailing text, so a full-match regex is
+# needed to reject filenames that merely start like the pattern.
+_STRPTIME_DIRECTIVES: Dict[str, str] = {
+    "%Y": r"\d{4}",
+    "%y": r"\d{2}",
+    "%j": r"\d{3}",
+    "%m": r"\d{1,2}",
+    "%d": r"\d{1,2}",
+    "%H": r"\d{1,2}",
+    "%M": r"\d{1,2}",
+    "%S": r"\d{1,2}",
+    "%b": r"[A-Za-z]{3}",
+    "%B": r"[A-Za-z]+",
+    "%a": r"[A-Za-z]{3}",
+    "%A": r"[A-Za-z]+",
+    "%%": "%",
+}
+
+
+@lru_cache(maxsize=64)
+def _strptime_pattern_to_regex(pattern: str) -> re.Pattern:
+    """Compile a strptime-style *pattern* to an anchored full-match regex."""
+    parts: List[str] = []
+    i = 0
+    n = len(pattern)
+    while i < n:
+        if pattern[i] == "%" and i + 1 < n:
+            two = pattern[i:i + 2]
+            if two in _STRPTIME_DIRECTIVES:
+                parts.append(_STRPTIME_DIRECTIVES[two])
+                i += 2
+                continue
+            parts.append(re.escape(pattern[i]))
+            i += 1
+        else:
+            parts.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("^" + "".join(parts) + "$")
+
+
+def derive_date_from_filename(
+    filepath: str | Path,
+    date_pattern: Optional[str] = None,
+) -> pd.Timestamp | None:
+    """Extract a date from a filename.
+
+    With *date_pattern* ``None``, falls back to the ROMS convention
+    (``roms_avg_YYYYMMDDZhh.nc``).  With a strptime-style *date_pattern*
+    (e.g. ``roms_avg_%Y%m%dZ%H``), the pattern is matched against the
+    filename *stem* (extension stripped) and the timestamp parsed from it.
+
+    Returns
+    -------
+    pd.Timestamp or None
+        ``None`` when the filename does not match the pattern.
+    """
+    if date_pattern is None:
+        return derive_date_from_roms_filename(filepath)
+
+    stem = Path(filepath).stem
+    rx = _strptime_pattern_to_regex(date_pattern)
+    if rx.fullmatch(stem) is None:
+        return None
+    try:
+        dt = datetime.strptime(stem, date_pattern)
+    except ValueError:
+        return None
+    return pd.Timestamp(dt)
+
+
 # ---------------------------------------------------------------------------
 # TimeAssembler
 # ---------------------------------------------------------------------------
@@ -94,6 +166,7 @@ class TimeAssembler:
         # Populated by scan()
         self._file_map: Dict[pd.Timestamp, Path] = {}  # date -> path
         self._unmatched: List[Path] = []                # files not matching pattern
+        self._date_pattern: Optional[str] = None
 
         # Populated by assemble()
         self._combined_ds: xr.Dataset | None = None
@@ -106,14 +179,18 @@ class TimeAssembler:
     def scan(
         self,
         pattern: str = "roms_avg_*.nc",
+        date_pattern: Optional[str] = None,
         on_unmatched: str = "warn",
     ) -> "TimeAssembler":
-        """Scan the data directory for ROMS daily files.
+        """Scan the data directory for per-timestep files.
 
         Parameters
         ----------
         pattern : str
-            Glob pattern to match daily files.
+            Glob pattern to match the daily files.
+        date_pattern : str or None
+            strptime-style filename date pattern (e.g. ``roms_avg_%Y%m%dZ%H``).
+            ``None`` uses the built-in ROMS convention.
         on_unmatched : str
             ``"warn"``, ``"ignore"``, or ``"error"``.
 
@@ -128,11 +205,12 @@ class TimeAssembler:
                 f"No files matching '{pattern}' found in {self._data_dir}"
             )
 
+        self._date_pattern = date_pattern
         self._file_map.clear()
         self._unmatched.clear()
 
         for fp in files:
-            ts = derive_date_from_roms_filename(fp)
+            ts = derive_date_from_filename(fp, date_pattern)
             if ts is not None:
                 self._file_map[ts] = fp
             else:
@@ -143,12 +221,12 @@ class TimeAssembler:
 
         if self._unmatched and on_unmatched == "warn":
             print(f"[TimeAssembler] {len(self._unmatched)} file(s) did not match "
-                  f"ROMS date pattern:")
+                  f"the date pattern:")
             for uf in self._unmatched:
                 print(f"  - {uf.name}")
         elif self._unmatched and on_unmatched == "error":
             raise ValueError(
-                f"{len(self._unmatched)} file(s) did not match ROMS date pattern: "
+                f"{len(self._unmatched)} file(s) did not match the date pattern: "
                 f"{[f.name for f in self._unmatched]}"
             )
 
@@ -199,7 +277,7 @@ class TimeAssembler:
     def assemble(
         self,
         chunks: Dict[str, int] | None = None,
-        concat_dim: str = "ocean_time",
+        concat_dim: Optional[str] = None,
         preprocess=None,
     ) -> xr.Dataset:
         """Concatenate all scanned files into a single lazy time-series Dataset.
@@ -211,11 +289,13 @@ class TimeAssembler:
         Parameters
         ----------
         chunks : dict or None
-            Dask chunking scheme.  Default: ``{"ocean_time": 1}`` so
+            Dask chunking scheme.  Default: ``{concat_dim: 1}`` so
             that each file is a separate chunk.
-        concat_dim : str
-            Dimension along which to concatenate.  ROMS uses
-            ``"ocean_time"``.
+        concat_dim : str or None
+            Dimension along which to concatenate.  ``None`` auto-resolves
+            from the first file's :class:`SourceMeta` (``time_dim`` or
+            ``"ocean_time"``).  ROMS resolves to ``"ocean_time"``; a CF
+            dataset resolves to ``"time"``.
         preprocess : callable or None
             Optional function applied to each file before concatenation
             (passed through to ``open_mfdataset``).
@@ -235,6 +315,20 @@ class TimeAssembler:
             raise RuntimeError(
                 "No files scanned. Call assembler.scan() before assemble()."
             )
+
+        if concat_dim is None:
+            # Auto-resolve the concatenation dimension from the first file.
+            first_path = str(self._file_map[self.dates[0]])
+            first_ds = xr.open_dataset(first_path, engine="netcdf4")
+            try:
+                adapter_cls = detect_source(first_ds, first_path)
+                if adapter_cls is not None:
+                    base_meta = adapter_cls().adapt(first_ds)
+                    concat_dim = base_meta.time_dim or "ocean_time"
+                else:
+                    concat_dim = "ocean_time"
+            finally:
+                first_ds.close()
 
         if chunks is None:
             chunks = {concat_dim: 1}

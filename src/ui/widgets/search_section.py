@@ -93,16 +93,12 @@ class SearchSection(QGroupBox):
         search_row.addWidget(self._search_input, 1)
 
         # Autocomplete from all keywords + names
-        completions: set[str] = set()
-        for ds in self._config.datasets:
-            completions.add(ds.name)
-            completions.update(ds.keywords)
-            completions.update(ds.variables)
-        model = QStringListModel(sorted(completions))
-        completer = QCompleter(model, self)
+        self._completer_model = QStringListModel()
+        completer = QCompleter(self._completer_model, self)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self._search_input.setCompleter(completer)
+        self._rebuild_completer()
 
         search_btn = QPushButton("Search")
         search_btn.clicked.connect(self._on_search)
@@ -177,3 +173,18 @@ class SearchSection(QGroupBox):
     @property
     def results(self) -> list[DatasetConfig]:
         return self._results
+
+    def _rebuild_completer(self) -> None:
+        """Rebuild the autocomplete list from the current config's datasets."""
+        completions: set[str] = set()
+        for ds in self._config.datasets:
+            completions.add(ds.name)
+            completions.update(ds.keywords)
+            completions.update(ds.variables)
+        self._completer_model.setStringList(sorted(completions))
+
+    def reload(self, config: AppConfig) -> None:
+        """Refresh after the catalog changes (e.g. a new dataset was imported)."""
+        self._config = config
+        self._rebuild_completer()
+        self._on_back()

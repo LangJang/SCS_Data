@@ -1,8 +1,9 @@
 """
-Dataset registry reader for config.yaml.
+Dataset configuration model + application config loader.
 
-Loads dataset metadata (name, source, variables, resolution options,
-spatial/temporal extent, file path) and provides keyword-based search.
+``DatasetConfig`` models one registered dataset; ``AppConfig`` reads the
+dataset/overlay catalog from the SQLite registry (``registry.db``) and the
+preset-region / color-style lists from ``config.yaml``.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ class DatasetConfig:
         "time_start", "time_end", "time_frequency",
         "vertical_type", "vertical_layers", "vertical_range", "depth_values",
         "path", "file_pattern",
+        "hidden", "file_layout", "time_axis", "date_pattern",
     )
 
     def __init__(self, raw: dict) -> None:
@@ -60,6 +62,12 @@ class DatasetConfig:
 
         self.path: str = resolve_path_string(raw.get("path", ""))
         self.file_pattern: str = raw.get("file_pattern", "")
+
+        # Read-template fields (from the SQLite registry; see registry.py)
+        self.hidden: bool = bool(raw.get("hidden", False))
+        self.file_layout: str = raw.get("file_layout", "single")
+        self.time_axis: str = raw.get("time_axis", "internal")
+        self.date_pattern: str = raw.get("date_pattern", "")
 
     def resolve_path(self, base_dir: Path) -> Path:
         """Return absolute data path, resolving relative paths."""
@@ -104,7 +112,12 @@ class PresetRegion:
 
 
 class AppConfig:
-    """Top-level application configuration loaded from config.yaml."""
+    """Top-level application configuration.
+
+    Datasets and overlays come from the SQLite registry (``registry.db``,
+    auto-seeded from ``config.yaml`` on first run); ``preset_regions`` and
+    ``color_styles`` remain in ``config.yaml``.
+    """
 
     def __init__(self, yaml_path: str | Path) -> None:
         yaml_path = Path(yaml_path)
@@ -113,21 +126,21 @@ class AppConfig:
 
         self._base_dir = yaml_path.parent
 
+        # Datasets + overlays live in SQLite (seeded from config.yaml once).
+        from src.core import registry
+        registry.ensure_seeded(yaml_path)
+
         self.datasets: list[DatasetConfig] = [
-            DatasetConfig(d) for d in raw.get("datasets", [])
-            if not d.get("hidden", False)
+            d for d in registry.list_datasets()
+            if not d.hidden
         ]
+        self.overlays: list[dict] = registry.list_overlays()
+
+        # Preset regions + color styles stay in YAML.
         self.preset_regions: list[PresetRegion] = [
             PresetRegion(r) for r in raw.get("preset_regions", [])
         ]
         self.color_styles: list[str] = raw.get("color_styles", ["viridis"])
-
-        self.overlays: list[dict] = []
-        for ov in raw.get("overlays", []):
-            ov = dict(ov)
-            if "path" in ov:
-                ov["path"] = resolve_path_string(ov["path"])
-            self.overlays.append(ov)
 
     # ------------------------------------------------------------------
     # Search

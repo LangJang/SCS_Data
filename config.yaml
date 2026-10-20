@@ -42,6 +42,9 @@ datasets:
       depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
     path: "{CMEMS_STD_ROMS}/"
     file_pattern: "roms_avg_*.nc"
+    file_layout: directory
+    time_axis: per_file
+    date_pattern: "roms_avg_%Y%m%dZ%H"
 
   - name: "SCSIO Rectilinear (0–400 m, 0.05°)"
     source: "SCSIO-Rectilinear"
@@ -208,6 +211,9 @@ datasets:
       layers: 45
     path: "data/"
     file_pattern: "roms_avg_*.nc"
+    file_layout: directory
+    time_axis: per_file
+    date_pattern: "roms_avg_%Y%m%dZ%H"
 
   # ---------------------------------------------------------------------------
   # CMEMS — Biogeochemical

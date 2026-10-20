@@ -15,9 +15,9 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QComboBox, QPushButton, QGroupBox,
     QFileDialog, QMessageBox, QDialogButtonBox, QLineEdit,
-    QListWidget, QListWidgetItem, QAbstractItemView,
+    QListWidget, QListWidgetItem, QAbstractItemView, QDateEdit,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QDate
 
 from src.core.canonical import SourceMeta
 from src.core.export import to_csv, to_netcdf
@@ -59,10 +59,11 @@ class ExportDialog(QDialog):
         default_dir: str = "",
         target_resolution: float = 0.05,
         overlay_df = None,
+        time_labels: list[str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Export")
-        self.resize(550, 440)
+        self.resize(550, 480)
         self.setModal(True)
 
         self._ds = ds
@@ -70,6 +71,7 @@ class ExportDialog(QDialog):
         self._canon = canonical_name
         self._time_start_idx = time_start_idx
         self._time_end_idx = time_end_idx
+        self._time_labels = time_labels or []
         self._depth_options = depth_options
         self._north = north
         self._south = south
@@ -100,6 +102,19 @@ class ExportDialog(QDialog):
             return float(abs(lon_vals[1] - lon_vals[0]))
         return 0.05  # fallback
 
+    def _resolve_date_to_index(self, date_str: str) -> int:
+        """Nearest-match index of *date_str* within ``self._time_labels``.
+
+        Handles irregular calendars (missing days / gaps): pick the closest
+        existing timestep rather than requiring an exact match.
+        """
+        labels = self._time_labels
+        if not labels:
+            return 0
+        target = np.datetime64(date_str)
+        arr = np.array(labels, dtype="datetime64[D]")
+        return int(np.argmin(np.abs(arr - target)))
+
     # ------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------
@@ -119,6 +134,33 @@ class ExportDialog(QDialog):
             f"E={self._east:.2f}  W={self._west:.2f}"
         ))
         layout.addWidget(summary)
+
+        # ---- Time Range (data formats with a time axis) ----
+        self._time_group = QGroupBox("Time Range")
+        time_layout = QFormLayout(self._time_group)
+        self._time_start = QDateEdit()
+        self._time_start.setCalendarPopup(True)
+        self._time_start.setDisplayFormat("yyyy-MM-dd")
+        self._time_end = QDateEdit()
+        self._time_end.setCalendarPopup(True)
+        self._time_end.setDisplayFormat("yyyy-MM-dd")
+        if self._time_labels:
+            first = QDate.fromString(self._time_labels[0], "yyyy-MM-dd")
+            last = QDate.fromString(self._time_labels[-1], "yyyy-MM-dd")
+            self._time_start.setDateRange(first, last)
+            self._time_end.setDateRange(first, last)
+            start_label = self._time_labels[
+                max(0, min(self._time_start_idx, len(self._time_labels) - 1))]
+            end_label = self._time_labels[
+                max(0, min(self._time_end_idx, len(self._time_labels) - 1))]
+            self._time_start.setDate(QDate.fromString(start_label, "yyyy-MM-dd"))
+            self._time_end.setDate(QDate.fromString(end_label, "yyyy-MM-dd"))
+            time_layout.addRow("Start:", self._time_start)
+            time_layout.addRow("End:", self._time_end)
+            time_layout.addRow("Steps:", QLabel(f"{len(self._time_labels)} timesteps"))
+        else:
+            self._time_group.setVisible(False)
+        layout.addWidget(self._time_group)
 
         # ---- Output Settings ----
         fmt_group = QGroupBox("Output Settings")
@@ -265,8 +307,16 @@ class ExportDialog(QDialog):
         time_dim = meta.time_dim
         if time_dim and time_dim in da.dims:
             n_t = da.sizes[time_dim]
-            t0 = max(0, self._time_start_idx)
-            t1 = min(n_t, self._time_end_idx + 1)  # +1 = inclusive
+            if self._time_labels and not self._time_group.isHidden():
+                t0 = self._resolve_date_to_index(
+                    self._time_start.date().toString("yyyy-MM-dd"))
+                t1 = self._resolve_date_to_index(
+                    self._time_end.date().toString("yyyy-MM-dd"))
+                t0 = max(0, t0)
+                t1 = min(n_t, t1 + 1)  # +1 = inclusive
+            else:
+                t0 = max(0, self._time_start_idx)
+                t1 = min(n_t, self._time_end_idx + 1)  # +1 = inclusive
             da = da.isel({time_dim: slice(t0, t1)})
 
         # -- 2. Slice depth to selected levels --

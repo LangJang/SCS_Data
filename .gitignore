@@ -35,6 +35,11 @@ Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
+# Metadata registry (SQLite)
+registry.db
+registry.db-journal
+registry.db-wal
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
