@@ -22,6 +22,9 @@ import shutil
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.core.paths import CMEMS_OUTPUT_DIR
+
 import numpy as np
 from netCDF4 import Dataset as NC4Dataset
 
@@ -30,7 +33,7 @@ from netCDF4 import Dataset as NC4Dataset
 # Config
 # ---------------------------------------------------------------------------
 
-OUT_DIR = Path("D:/ChatWithAI/Downloading_CEMES/output")
+OUT_DIR = CMEMS_OUTPUT_DIR
 
 # (extracted_file, standardized_file, variables)
 JOBS = [

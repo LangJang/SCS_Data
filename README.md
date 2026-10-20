@@ -1,4 +1,6 @@
-# SCS Marine Environmental Data Tool
+# SCS_Data — SCS Marine Environmental Data Tool
+
+构建多源融合数据库处理界面，集成物理海洋、生态以及渔业信息的科学综合平台，能够进行大数据处理，综合分析与数据分发。
 
 South China Sea (SCS) oceanographic data aggregation, preprocessing, visualization, and export utility.
 

@@ -12,6 +12,8 @@ from typing import Dict, List, Optional
 
 import yaml
 
+from src.core.paths import resolve_path_string
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -56,7 +58,7 @@ class DatasetConfig:
         self.vertical_range: list[float] = vert.get("range", [])
         self.depth_values: list[float] = vert.get("depth_values", [])
 
-        self.path: str = raw.get("path", "")
+        self.path: str = resolve_path_string(raw.get("path", ""))
         self.file_pattern: str = raw.get("file_pattern", "")
 
     def resolve_path(self, base_dir: Path) -> Path:
@@ -120,7 +122,12 @@ class AppConfig:
         ]
         self.color_styles: list[str] = raw.get("color_styles", ["viridis"])
 
-        self.overlays: list[dict] = raw.get("overlays", [])
+        self.overlays: list[dict] = []
+        for ov in raw.get("overlays", []):
+            ov = dict(ov)
+            if "path" in ov:
+                ov["path"] = resolve_path_string(ov["path"])
+            self.overlays.append(ov)
 
     # ------------------------------------------------------------------
     # Search

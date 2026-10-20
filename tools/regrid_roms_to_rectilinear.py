@@ -21,6 +21,9 @@ Usage:
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.core.paths import CMEMS_STD_ROMS_DIR, CMEMS_OUTPUT_DIR
+
 import numpy as np
 import xarray as xr
 from scipy.spatial import cKDTree
@@ -29,8 +32,8 @@ from scipy.spatial import cKDTree
 # Config
 # ---------------------------------------------------------------------------
 
-ROMS_DIR = Path("D:/ChatWithAI/Downloading_CEMES/output/roms")
-CMEMS_REF = Path("D:/ChatWithAI/Downloading_CEMES/output/SCS_cmems_do_chl.nc")
+ROMS_DIR = CMEMS_STD_ROMS_DIR
+CMEMS_REF = CMEMS_OUTPUT_DIR / "SCS_cmems_do_chl.nc"
 OUT_PATH = ROMS_DIR / "roms_rectilinear_005deg.nc"
 
 # Variables to regrid: (source_name, grid_type)

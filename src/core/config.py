@@ -1,11 +1,14 @@
 """
 Project-wide path constants for SCS Marine Data Tool.
 
-All data-source directories are configured here. Scripts and modules
-should import from this module rather than hardcoding paths.
+Machine-specific (hardcoded) paths live in ``src/core/paths.py`` — the
+single file to edit when data moves.  This module re-exports them plus
+the project-relative paths, so existing importers keep working.
 """
 
 from pathlib import Path
+
+from src.core.paths import CMEMS_DIR, ROMS_LEGACY_DIR
 
 # ---------------------------------------------------------------------------
 # Project root (resolved from the location of THIS file)
@@ -17,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # ---------------------------------------------------------------------------
 
 # CMEMS / Copernicus Marine data — downloaded products
-DATA_DIR_CMEMS = Path("D:/ChatWithAI/Downloading_CEMES")
+DATA_DIR_CMEMS = CMEMS_DIR
 
 # ROMS model output — placed in the project's data/ directory
 DATA_DIR_ROMS = PROJECT_ROOT / "data"
@@ -27,7 +30,7 @@ DATA_DIR_ROMS = PROJECT_ROOT / "data"
 # ---------------------------------------------------------------------------
 
 # Original ROMS directory (used before data/ was set up)
-DATA_DIR_ROMS_LEGACY = Path("D:/ChatWithAI")
+DATA_DIR_ROMS_LEGACY = ROMS_LEGACY_DIR
 
 # ---------------------------------------------------------------------------
 # Output

@@ -40,6 +40,9 @@ import shutil
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.core.paths import CMEMS_DIR, CMEMS_OUTPUT_DIR
+
 import numpy as np
 import xarray as xr
 from netCDF4 import Dataset as NC4Dataset
@@ -69,9 +72,9 @@ FILE_MAP = {
     },
 }
 
-BASE = Path("D:/ChatWithAI/Downloading_CEMES")
-STD_DIR = BASE / "output"
-ORIG_DIR = BASE
+BASE = CMEMS_DIR
+STD_DIR = CMEMS_OUTPUT_DIR
+ORIG_DIR = CMEMS_DIR
 
 
 # ---------------------------------------------------------------------------

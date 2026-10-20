@@ -40,7 +40,7 @@ datasets:
       type: depth
       layers: 14
       depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
-    path: "D:/ChatWithAI/Downloading_CEMES/output/roms/"
+    path: "{CMEMS_STD_ROMS}/"
     file_pattern: "roms_avg_*.nc"
 
   - name: "SCSIO Rectilinear (0–400 m, 0.05°)"
@@ -73,7 +73,7 @@ datasets:
       type: depth
       layers: 14
       depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
-    path: "D:/ChatWithAI/Downloading_CEMES/output/roms/"
+    path: "{CMEMS_STD_ROMS}/"
     file_pattern: "roms_rectilinear_005deg.nc"
 
   # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ datasets:
       type: depth
       layers: 14
       depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
-    path: "D:/ChatWithAI/Downloading_CEMES/output/"
+    path: "{CMEMS_OUTPUT}/"
     file_pattern: "SCS_cmems_do_chl.nc"
 
   - name: "CMEMS Standardized — Nutrients (0–400 m, 0.05°)"
@@ -136,7 +136,7 @@ datasets:
       type: depth
       layers: 14
       depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
-    path: "D:/ChatWithAI/Downloading_CEMES/output/"
+    path: "{CMEMS_OUTPUT}/"
     file_pattern: "SCS_cmems_no3_po4_si.nc"
 
   - name: "CMEMS Standardized — pH (0–400 m, 0.05°)"
@@ -163,7 +163,7 @@ datasets:
       type: depth
       layers: 14
       depth_values: [0, 20, 40, 60, 80, 100, 120, 140, 160, 200, 250, 300, 350, 400]
-    path: "D:/ChatWithAI/Downloading_CEMES/output/"
+    path: "{CMEMS_OUTPUT}/"
     file_pattern: "SCS_cmems_ph.nc"
 
   # ===========================================================================
@@ -238,7 +238,7 @@ datasets:
       type: depth
       layers: 75
       range: [0.5, 5902.1]
-    path: "D:/ChatWithAI/Downloading_CEMES/"
+    path: "{CMEMS_DIR}/"
     file_pattern: "SCS_BGC_DO_CHL_2025.nc"
 
   - name: "CMEMS Nitrate, Phosphate & Silicate"
@@ -269,7 +269,7 @@ datasets:
       type: depth
       layers: 75
       range: [0.5, 5902.1]
-    path: "D:/ChatWithAI/Downloading_CEMES/"
+    path: "{CMEMS_DIR}/"
     file_pattern: "SCS_BGC_no3_po4_si_2023-2025.nc"
 
   - name: "CMEMS pH"
@@ -296,7 +296,7 @@ datasets:
       type: depth
       layers: 50
       range: [0.5, 5727.9]
-    path: "D:/ChatWithAI/Downloading_CEMES/"
+    path: "{CMEMS_DIR}/"
     file_pattern: "SCS_BGC_PH_2023-2025.nc"
 
 # ---------------------------------------------------------------------------
@@ -379,7 +379,7 @@ overlays:
 
   # ---- Biological survey (station point + detail panel) ----
   - label: "Tuna Survey (SCS-01)"
-    path: "D:/ChatWithAI/SCS_data/data/tuna_202606.xlsx"
+    path: "{SCS_DATA}/data/tuna_202606.xlsx"
     type: station
     station_lat: 11.2
     station_lon: 114.0
